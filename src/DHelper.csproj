@@ -15,11 +15,24 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>false</SelfContained>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>DHelper.ico</ApplicationIcon>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- WebView2's WPF assembly references a newer WindowsBase; WinForms doesn't use it. -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- Signed PawnIO RyzenSMU module, extracted from G-Helper; must sit next to DHelper.exe -->
     <None Include="RyzenSMU.bin" CopyToOutputDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <!-- Dashboard page, shown in WebView2 -->
+    <EmbeddedResource Include="ui\index.html" LogicalName="DHelper.ui.index.html" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.2" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4370.26" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="11.0.0" />
   </ItemGroup>
 
 </Project>

@@ -117,6 +117,23 @@ ASUS HID devices present: `VID_0B05&PID_1866` (COL01, 04, 05, 06, 07).
 | SMU telemetry, read only | Cezanne detected; STAPM 186 W / slow 155 W / fast 186 W limits; ~50 W draw; Tctl 67–77/93 °C |
 | Game-mode controller (harness as "game", offset −10) | Turbo + Tctl 93 at detection; full load hit 93–95 °C in 2 s → fan boost; CO −10 ON after 4 s of load; removed 2 s after load dropped; Balanced and CO 0 restored on exit; no marker left behind |
 
+| BF6 session 1 (old build) | CPU at its limit 99 % of 215 s; undervolt on 98 %, fan boost 99 %; firmware reset the Tctl limit 95 → 93 °C at 07:43:05 and it stayed there |
+| BF6 session 2 (re-assert build) | limit held at 95 °C for 599 of 600 s (the firmware's reset at game start was undone within 1 s); in menus load 90–98 %, Tctl 95 °C, effective clock ≈ 3.25 GHz: cooling-bound |
+| BF6 with steady-clocks cap in max performance | cap 92–105 W for 226 s (71 s while ≥ 5 °C under the limit): 52.7 fps avg, 1 % low 25.4, fans ~6300 rpm |
+| BF6 uncapped, fan boost off | 58.0 fps avg, 1 % low 31.3, fans ~5100 rpm: faster and quieter, so caps are now skipped when FPS is measurable |
+| Power limits via SMU (during BF6) | Turbo limits read 216/180/216 W, draw 132.9 W at Tctl 94.9 °C. `SetPowerLimits(80, 80, 88)` → read back 80/80/88 W, draw 79.9 W, Tctl 84.7 °C after 1 s; originals restored cleanly. Units confirmed as watts (×1000 = mW in the mailbox). |
+
+## 2d. FPS monitor (type `GHelper.Overlay.EtwFpsMonitor`)
+
+* Real-time ETW session, flushed every 200 ms. Windows 11 path: Microsoft-Windows-DxgKrnl `{802EC45A-1E99-4B83-9920-87C98277BA9D}`,
+  level 4, keyword `0x8000000`, event-ID filter (`EVENT_FILTER_TYPE_EVENT_ID`, `0x80000200`) = 184. Windows 10 path:
+  Microsoft-Windows-DXGI `{CA11C036-0102-4A2D-A6AD-F03CFED5D3C9}` event 42, plus DxgKrnl task 14 / opcode 1.
+* 360-entry ring buffer of QPC timestamps per target process; FPS = (frames in the last second − 1) / span.
+* D-Helper enables **both** DXGI 42 and DxgKrnl 184 for all processes (DXGI preferred per process), which is what made
+  Battlefield 6 measurable, and uses per-process rates to detect the foreground fullscreen game.
+* With EA anti-cheat running, enabling **any** ETW provider is refused (`ERROR_ACCESS_DENIED`, also for a harmless
+  control provider); a session enabled before the game starts keeps delivering events.
+
 ## Open items
 
 * The keyboard HID writes were accepted. The visible change was not observed by the tester (needs a human looking at the keys).

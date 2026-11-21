@@ -2,9 +2,15 @@ namespace DHelper;
 
 internal static class Program
 {
+    // Same ID as the Start menu / desktop shortcuts (tools/make-shortcut.ps1): a pinned shortcut and the
+    // running window then share one taskbar button with the D-Helper icon.
+    [System.Runtime.InteropServices.DllImport("shell32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SetCurrentProcessExplicitAppUserModelID(string appId);
+
     [STAThread]
     private static void Main(string[] args)
     {
+        SetCurrentProcessExplicitAppUserModelID("DHelper.App");
         using var mutex = new Mutex(true, "DHelper.SingleInstance", out bool isFirst);
         if (!isFirst)
         {

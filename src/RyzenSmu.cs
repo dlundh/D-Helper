@@ -130,7 +130,7 @@ public sealed class RyzenSmu : IDisposable
 
     public uint SetTctlLimit(int celsius)
     {
-        celsius = Math.Clamp(celsius, 60, 98);
+        celsius = Math.Clamp(celsius, 60, 100); // Ryzen 9 5980HX maximum is 105 °C
         uint r = SendMp1(0x19, (uint)celsius);
         Log.Write($"SMU Tctl limit {celsius}°C -> {r}");
         return r;

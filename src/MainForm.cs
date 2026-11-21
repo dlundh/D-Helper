@@ -1,47 +1,38 @@
 using System.Drawing.Drawing2D;
+using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 using Microsoft.Win32;
-using Timer = System.Windows.Forms.Timer;
 
 namespace DHelper;
 
+/// <summary>
+/// Window + tray. The dashboard is an HTML page (ui/index.html, embedded) shown in WebView2;
+/// this class owns all hardware actions and talks to the page through JSON messages:
+///   C# -> page: {type:"config"}, {type:"state"} every second, {type:"toast"}
+///   page -> C#: {cmd:"ready"|"mode"|"battery"|"keyboard"|"light"|"lightBar"|"gameEnabled"|"games"|
+///                     "gameUv"|"gameTarget"|"advice"|"runAtLogin"|"applyOnStart"|"hide"|"quit"}
+/// </summary>
 public sealed class MainForm : Form
 {
-    private static readonly Color Bg = Color.FromArgb(28, 28, 30);
-    private static readonly Color Panel = Color.FromArgb(40, 40, 44);
-    private static readonly Color Fg = Color.FromArgb(235, 235, 240);
-    private static readonly Color Muted = Color.FromArgb(150, 150, 160);
-    private static readonly Color Accent = Color.FromArgb(0, 150, 255);
-    private static readonly Color ButtonBg = Color.FromArgb(58, 58, 64);
-
     private readonly AsusAcpi _acpi;
+    private readonly RyzenSmu _smu;
     private readonly AppConfig _config;
     private readonly bool _startMinimized;
     private readonly NotifyIcon _tray;
-    private readonly Timer _sensorTimer;
-
-    private readonly Label _sensors = new();
-    private readonly Label _gpuStatus = new();
-    private readonly Label _batteryValue = new();
-    private readonly TrackBar _battery = new();
-    private readonly Dictionary<int, Button> _modeButtons = new();
-    private readonly Dictionary<bool, Button> _gpuButtons = new();
-    private readonly Dictionary<int, Button> _kbButtons = new();
     private readonly ToolStripMenuItem[] _trayModeItems = new ToolStripMenuItem[3];
-    private readonly Dictionary<int, Button> _lightModeButtons = new();
-    private readonly Dictionary<int, Button> _lightSpeedButtons = new();
-    private readonly CheckBox _lightBar = new();
-    private Button _colorButton = null!;
-    private readonly NumericUpDown _gameUv = new();
-    private bool _loadingUi = true;
+    private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Color.FromArgb(12, 14, 34) };
+    private readonly GameController _game;
+    private readonly string _model;
+    private bool _pageReady, _exiting;
 
-    private bool _gpuSupported;
-    private bool _gpuBusy;
-    private bool _exiting;
-
-    private readonly RyzenSmu _smu;
-    private GameController? _game;
-    private readonly Label _gameStatus = new();
-    private readonly Label _telemetry = new();
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Converters = { new JsonStringEnumConverter() },
+    };
 
     public MainForm(AsusAcpi acpi, RyzenSmu smu, AppConfig config, bool startMinimized)
     {
@@ -49,353 +40,236 @@ public sealed class MainForm : Form
         _smu = smu;
         _config = config;
         _startMinimized = startMinimized;
+        _model = GetModelName();
 
         Text = "D-Helper";
-        Icon = CreateAppIcon();
-        BackColor = Bg;
-        ForeColor = Fg;
-        Font = new Font("Segoe UI", 10f);
-        FormBorderStyle = FormBorderStyle.FixedSingle;
-        MaximizeBox = false;
+        // The icon embedded in DHelper.exe (DHelper.ico); the drawn one is only a fallback.
+        Icon = (Environment.ProcessPath != null ? Icon.ExtractAssociatedIcon(Environment.ProcessPath) : null) ?? CreateAppIcon();
+        BackColor = Color.FromArgb(12, 14, 34);
         StartPosition = FormStartPosition.CenterScreen;
-        AutoSize = true;
-        AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        Padding = new Padding(16);
-
-        BuildUi();
+        var area = Screen.PrimaryScreen!.WorkingArea;
+        Size = new Size(Math.Min(1320, area.Width - 40), Math.Min(900, area.Height - 40));
+        MinimumSize = new Size(900, 600);
+        Controls.Add(_web);
 
         _tray = new NotifyIcon { Icon = Icon, Text = "D-Helper", Visible = true, ContextMenuStrip = BuildTrayMenu() };
         _tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowFromTray(); };
 
-        _sensorTimer = new Timer { Interval = 2000 };
-        _sensorTimer.Tick += (_, _) => RefreshSensors();
-
         // On first run there is no saved choice yet, so don't overwrite the laptop's current state.
-        if (_config.ApplyOnStartup && AppConfig.Exists)
-        {
-            ApplyMode(_config.PerformanceMode, save: false);
-            _acpi.SetBatteryLimit(_config.BatteryLimit);
-            SetKeyboardHardware(_config.KeyboardLevel);
-            ReapplyLighting();
-        }
-        HighlightLighting();
-        _loadingUi = false;
-        if (AppConfig.Exists)
-        {
-            HighlightMode(_config.PerformanceMode);
-            HighlightKeyboard(_config.KeyboardLevel);
-        }
-        else
-        {
-            // Nothing chosen yet: the hardware state is whatever another tool last set, so don't pretend to know it.
-            _batteryValue.Text = "not set";
-        }
-        RefreshGpuState();
-        RefreshSensors();
-
-        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        if (_config.ApplyOnStartup && AppConfig.Exists) ApplySavedSettings();
+        UpdateTrayMode(_config.PerformanceMode);
 
         _game = new GameController(_acpi, _smu, _config);
-        _game.Changed += () => { if (IsHandleCreated) BeginInvoke(RefreshGameStatus); };
+        _game.Changed += () => { if (IsHandleCreated && !IsDisposed) BeginInvoke(PostState); };
         if (_game.CrashGuardMessage != null)
             _tray.ShowBalloonTip(10000, "D-Helper crash guard", _game.CrashGuardMessage, ToolTipIcon.Warning);
+
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
+        _ = InitWebAsync();
     }
 
-    private void RefreshGameStatus()
+    // ---------- WebView2 ----------
+
+    private async Task InitWebAsync()
     {
-        if (_game == null) return;
-        _gameStatus.Text = _game.StatusText;
-        _gameStatus.ForeColor = _game.CurrentPhase switch
+        try
         {
-            GameController.Phase.GameUndervolted => Color.FromArgb(90, 200, 120),
-            GameController.Phase.GameIdle => Color.FromArgb(240, 200, 80),
-            GameController.Phase.Unavailable => Color.FromArgb(240, 110, 100),
-            _ => Muted,
-        };
-        var t = _game.LastTelemetry;
-        _telemetry.Text = t == null ? "" :
-            $"Tctl {t.TctlValue:F0}/{t.TctlLimit:F0}°C   CPU {_game.LastCpuLoad}%   power {t.SlowValue:F0} W" +
-            (t.ThermalLimited ? "   THERMAL LIMIT" : t.PowerLimited ? "   POWER LIMIT" : "");
-        if (_game.CrashGuardMessage != null) _gameUv.Value = Math.Clamp(_config.GameUndervolt, -50, 0);
+            string dataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "D-Helper", "WebView2");
+            var env = await CoreWebView2Environment.CreateAsync(null, dataDir);
+            await _web.EnsureCoreWebView2Async(env);
+            var s = _web.CoreWebView2.Settings;
+            s.AreDefaultContextMenusEnabled = false;
+            s.AreDevToolsEnabled = false;
+            s.IsZoomControlEnabled = false;
+            s.IsStatusBarEnabled = false;
+            _web.CoreWebView2.WebMessageReceived += (_, e) => HandleMessage(e.WebMessageAsJson);
+            _web.CoreWebView2.NavigateToString(LoadPage());
+        }
+        catch (Exception ex)
+        {
+            Log.Write("WebView2 failed: " + ex.Message);
+            Controls.Remove(_web);
+            Controls.Add(new Label
+            {
+                Dock = DockStyle.Fill, ForeColor = Color.White, TextAlign = ContentAlignment.MiddleCenter, Font = new Font("Segoe UI", 12),
+                Text = "The dashboard needs the Microsoft Edge WebView2 Runtime.\nInstall it from microsoft.com/edge/webview2 and restart D-Helper.\n\n" + ex.Message,
+            });
+        }
     }
 
-    // ---------- UI construction ----------
-
-    private void BuildUi()
+    private static string LoadPage()
     {
-        var root = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.TopDown,
-            WrapContents = true, // flows into a second column when taller than the screen
-            MaximumSize = new Size(0, Screen.PrimaryScreen!.WorkingArea.Height - 110),
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Bg,
-        };
+        using var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("DHelper.ui.index.html")!;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 
-        var title = new Label
-        {
-            Text = "D-Helper",
-            Font = new Font("Segoe UI Semibold", 16f),
-            AutoSize = true,
-            ForeColor = Fg,
-        };
-        var model = new Label
-        {
-            Text = GetModelName(),
-            AutoSize = true,
-            ForeColor = Muted,
-            Margin = new Padding(3, 0, 3, 8),
-        };
-        _sensors.AutoSize = true;
-        _sensors.ForeColor = Fg;
-        _sensors.Font = new Font("Consolas", 10f);
-        _sensors.Margin = new Padding(3, 0, 3, 8);
+    private void Post(object message)
+    {
+        if (!_pageReady || _web.CoreWebView2 == null) return;
+        try { _web.CoreWebView2.PostWebMessageAsJson(JsonSerializer.Serialize(message, Json)); } catch { }
+    }
 
-        root.Controls.Add(title);
-        root.Controls.Add(model);
-        root.Controls.Add(_sensors);
+    private void PostConfig() => Post(new
+    {
+        type = "config",
+        model = _model,
+        mode = _config.PerformanceMode,
+        battery = _config.BatteryLimit,
+        batteryNotSet = !AppConfig.Exists,
+        gpuSupported = _acpi.GetGpuEco() >= 0 && _acpi.GetGpuMux() != 0,
+        keyboard = _config.KeyboardLevel,
+        lightMode = _config.LightMode,
+        lightColor = ToHex(Color.FromArgb(_config.LightColor)),
+        lightSpeed = _config.LightSpeed,
+        lightBar = _config.LightBarAwake,
+        gameEnabled = _config.GameModeEnabled,
+        games = _config.GameExecutables,
+        gameUv = _config.GameUndervolt,
+        safeUv = _config.SafeUndervolt,
+        gameTarget = _config.GameTempTarget,
+        steadyClocks = _config.SteadyClocks,
+        targetFps = _config.TargetFps,
+        fanBoost = _config.FanBoost,
+        hotkey = _hotkeyRegistered ? "Ctrl+Alt+L" : null,
+        runAtLogin = AppConfig.RunAtLogin,
+        applyOnStart = _config.ApplyOnStartup,
+    });
 
-        // Performance mode
-        root.Controls.Add(Section("Performance mode",
-            ModeButton("Silent", AsusAcpi.ModeSilent),
-            ModeButton("Balanced", AsusAcpi.ModeBalanced),
-            ModeButton("Turbo", AsusAcpi.ModeTurbo)));
-
-        // GPU mode
-        var eco = MakeButton("Eco", (_, _) => SwitchGpu(true));
-        var std = MakeButton("Standard", (_, _) => SwitchGpu(false));
-        _gpuButtons[true] = eco;
-        _gpuButtons[false] = std;
-        _gpuStatus.AutoSize = true;
-        _gpuStatus.ForeColor = Muted;
-        _gpuStatus.Margin = new Padding(3, 4, 3, 0);
-        var gpuSection = Section("GPU mode", eco, std);
-        ((FlowLayoutPanel)gpuSection.Controls[0]).Controls.Add(_gpuStatus);
-        root.Controls.Add(gpuSection);
-
-        // Battery limit
-        _battery.Minimum = 40;
-        _battery.Maximum = 100;
-        _battery.SmallChange = 5;
-        _battery.LargeChange = 5;
-        _battery.TickFrequency = 10;
-        _battery.Width = 300;
-        _battery.Value = Math.Clamp(_config.BatteryLimit, 40, 100);
-        _battery.BackColor = Panel;
-        _battery.ValueChanged += (_, _) =>
+    private void PostState()
+    {
+        var s = _game.GetSnapshot();
+        UpdateTray(s);
+        Post(new
         {
-            int snapped = (int)Math.Round(_battery.Value / 5.0) * 5;
-            if (snapped != _battery.Value) _battery.Value = snapped;
-            _batteryValue.Text = $"{_battery.Value}%";
-        };
-        _battery.MouseUp += (_, _) => ApplyBattery();
-        _battery.KeyUp += (_, _) => ApplyBattery();
-        _batteryValue.Text = $"{_battery.Value}%";
-        _batteryValue.AutoSize = true;
-        _batteryValue.Margin = new Padding(3, 10, 3, 3);
-        root.Controls.Add(Section("Battery charge limit", _battery, _batteryValue));
-
-        // Keyboard backlight
-        string[] kbNames = { "Off", "Low", "Medium", "High" };
-        var kb = new Control[4];
-        for (int i = 0; i < 4; i++)
-        {
-            int level = i;
-            var b = MakeButton(kbNames[i], (_, _) => ApplyKeyboard(level));
-            _kbButtons[level] = b;
-            kb[i] = b;
-        }
-        root.Controls.Add(Section("Keyboard backlight", kb));
-
-        // Lighting: effect, colour, speed, light bar power
-        (string name, AsusHid.AuraMode mode)[] effects =
-        {
-            ("Static", AsusHid.AuraMode.Static), ("Breathe", AsusHid.AuraMode.Breathe),
-            ("Color cycle", AsusHid.AuraMode.ColorCycle), ("Rainbow", AsusHid.AuraMode.Rainbow),
-            ("Strobe", AsusHid.AuraMode.Strobe),
-        };
-        var effectButtons = new List<Control>();
-        foreach (var (name, mode) in effects)
-        {
-            var b = MakeButton(name, (_, _) => { _config.LightMode = (int)mode; ApplyLighting(); });
-            _lightModeButtons[(int)mode] = b;
-            effectButtons.Add(b);
-        }
-        root.Controls.Add(Section("Lighting effect", effectButtons.ToArray()));
-
-        _colorButton = MakeButton("Color", (_, _) => PickColor());
-        _colorButton.MinimumSize = new Size(96, 34);
-        var speeds = new[] { ("Slow", 0), ("Normal", 1), ("Fast", 2) }.Select(s =>
-        {
-            var b = MakeButton(s.Item1, (_, _) => { _config.LightSpeed = s.Item2; ApplyLighting(); });
-            _lightSpeedButtons[s.Item2] = b;
-            return (Control)b;
+            type = "state",
+            s.Phase, s.StatusText, s.Game, s.Health, s.HealthTitle, s.HealthDetail,
+            s.CpuLoad, s.Tctl, s.TctlLimit, s.PowerW, s.PowerLimitW,
+            s.ClockMhz, s.PeakClockMhz, s.MaxClockMhz, s.CpuFanRpm, s.GpuFanRpm,
+            s.ThermalLimited, s.PowerLimited, s.ClockDrop,
+            s.UndervoltActive, s.UndervoltValue, s.CoolingBoost, s.SmuReady, s.SmuStatus,
+            s.PowerCapW, s.LagCount, s.LearningStatus,
+            s.Fps, s.FpsLow, s.TargetFps, s.Strategy, s.BudgetW, s.SavingW, s.ModeName, s.GameForeground,
+            learned = _game.Learner.Summary(),
+            events =s.Events.Select(e => new { time = e.Time.ToString("HH:mm:ss"), e.Kind, e.Text }),
+            advice = s.Advice,
+            s.CrashGuardMessage,
+            logError = Log.LastError,
         });
-        _lightBar.Text = "Light bar on";
-        _lightBar.AutoSize = true;
-        _lightBar.ForeColor = Fg;
-        _lightBar.Margin = new Padding(8, 9, 3, 3);
-        _lightBar.Checked = _config.LightBarAwake;
-        _lightBar.CheckedChanged += (_, _) =>
-        {
-            if (_loadingUi) return;
-            _config.LightBarAwake = _lightBar.Checked;
-            ApplyLightBarPower();
-        };
-        root.Controls.Add(Section("Color, speed and light bar",
-            new Control[] { _colorButton }.Concat(speeds).Append(_lightBar).ToArray()));
-
-        // Game mode
-        var gameEnabled = new CheckBox
-        {
-            Text = "Game mode (Turbo + load-gated undervolt + cooling)",
-            AutoSize = true,
-            Checked = _config.GameModeEnabled,
-            ForeColor = Fg,
-        };
-        gameEnabled.CheckedChanged += (_, _) => { _config.GameModeEnabled = gameEnabled.Checked; _config.Save(); };
-        _gameStatus.AutoSize = true;
-        _gameStatus.MaximumSize = new Size(420, 0);
-        _gameStatus.ForeColor = Muted;
-        _gameStatus.Text = "Starting…";
-        _telemetry.AutoSize = true;
-        _telemetry.ForeColor = Fg;
-        _telemetry.Font = new Font("Consolas", 9.5f);
-
-        var gamesLabel = new Label { Text = "Games (exe names, comma separated):", AutoSize = true, ForeColor = Muted, Margin = new Padding(3, 8, 3, 0) };
-        var games = new TextBox
-        {
-            Text = string.Join(", ", _config.GameExecutables),
-            Width = 410,
-            BackColor = ButtonBg,
-            ForeColor = Fg,
-            BorderStyle = BorderStyle.FixedSingle,
-        };
-        games.Leave += (_, _) =>
-        {
-            _config.GameExecutables = games.Text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
-            _config.Save();
-        };
-
-        _gameUv.Minimum = -50;
-        _gameUv.Maximum = 0;
-        _gameUv.Increment = 5;
-        _gameUv.Value = Math.Clamp(_config.GameUndervolt, -50, 0);
-        _gameUv.Width = 60;
-        _gameUv.BackColor = ButtonBg;
-        _gameUv.ForeColor = Fg;
-        _gameUv.ValueChanged += (_, _) => { _config.GameUndervolt = (int)_gameUv.Value; _config.Save(); };
-
-        var target = new NumericUpDown { Minimum = 75, Maximum = 95, Value = Math.Clamp(_config.GameTempTarget, 75, 95), Width = 60, BackColor = ButtonBg, ForeColor = Fg };
-        target.ValueChanged += (_, _) => { _config.GameTempTarget = (int)target.Value; _config.Save(); };
-
-        root.Controls.Add(Section("Game mode",
-            gameEnabled, _gameStatus, _telemetry, gamesLabel, games,
-            new Label { Text = "Undervolt under load:", AutoSize = true, ForeColor = Fg, Margin = new Padding(3, 10, 0, 0) }, _gameUv,
-            new Label { Text = "CPU limit °C:", AutoSize = true, ForeColor = Fg, Margin = new Padding(12, 10, 0, 0) }, target));
-
-        // Options
-        var runAtLogin = new CheckBox
-        {
-            Text = "Start D-Helper when I sign in",
-            AutoSize = true,
-            Checked = AppConfig.RunAtLogin,
-            ForeColor = Fg,
-        };
-        runAtLogin.CheckedChanged += (_, _) => AppConfig.RunAtLogin = runAtLogin.Checked;
-
-        var applyOnStart = new CheckBox
-        {
-            Text = "Re-apply my settings at start and after sleep",
-            AutoSize = true,
-            Checked = _config.ApplyOnStartup,
-            ForeColor = Fg,
-        };
-        applyOnStart.CheckedChanged += (_, _) => { _config.ApplyOnStartup = applyOnStart.Checked; _config.Save(); };
-
-        root.Controls.Add(Section("Options", runAtLogin, applyOnStart));
-
-        var hide = MakeButton("Hide to tray", (_, _) => Hide());
-        var quit = MakeButton("Quit", (_, _) => ExitApp());
-        var footer = new FlowLayoutPanel { AutoSize = true, Margin = new Padding(0, 8, 0, 0), BackColor = Bg };
-        footer.Controls.Add(hide);
-        footer.Controls.Add(quit);
-        root.Controls.Add(footer);
-
-        Controls.Add(root);
+        if (s.CrashGuardMessage != null) _game.DismissCrashGuard();
     }
 
-    private static Panel Section(string caption, params Control[] controls)
+    private void HandleMessage(string json)
     {
-        var outer = new Panel
+        try
         {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            BackColor = Panel,
-            Padding = new Padding(10, 6, 10, 8),
-            Margin = new Padding(0, 0, 0, 10),
-            MinimumSize = new Size(440, 0),
-        };
-        var inner = new FlowLayoutPanel
-        {
-            AutoSize = true,
-            AutoSizeMode = AutoSizeMode.GrowAndShrink,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = true,
-            MaximumSize = new Size(440, 0),
-            BackColor = Panel,
-            Dock = DockStyle.Bottom,
-        };
-        var label = new Label
-        {
-            Text = caption.ToUpperInvariant(),
-            AutoSize = true,
-            ForeColor = Muted,
-            Font = new Font("Segoe UI Semibold", 8.5f),
-            Dock = DockStyle.Top,
-        };
-        foreach (var c in controls) inner.Controls.Add(c);
-        outer.Controls.Add(inner);
-        outer.Controls.Add(label);
-        return outer;
-    }
+            using var doc = JsonDocument.Parse(json);
+            var m = doc.RootElement;
+            string cmd = m.GetProperty("cmd").GetString() ?? "";
+            int Int() => m.GetProperty("value").GetInt32();
+            bool Bool() => m.GetProperty("value").GetBoolean();
 
-    private Button ModeButton(string text, int mode)
-    {
-        var b = MakeButton(text, (_, _) => ApplyMode(mode, save: true));
-        _modeButtons[mode] = b;
-        return b;
-    }
-
-    private static Button MakeButton(string text, EventHandler onClick)
-    {
-        var b = new Button
+            switch (cmd)
+            {
+                case "ready": _pageReady = true; PostConfig(); PostState(); break;
+                case "mode": ApplyMode(Int(), save: true); break;
+                case "battery":
+                    _config.BatteryLimit = Math.Clamp(Int(), 40, 100);
+                    _acpi.SetBatteryLimit(_config.BatteryLimit);
+                    _config.Save();
+                    break;
+                case "keyboard":
+                    _config.KeyboardLevel = Math.Clamp(Int(), 0, 3);
+                    SetKeyboardHardware(_config.KeyboardLevel);
+                    _config.Save();
+                    break;
+                case "light":
+                    _config.LightMode = m.GetProperty("mode").GetInt32();
+                    _config.LightSpeed = m.GetProperty("speed").GetInt32();
+                    _config.LightColor = ColorTranslator.FromHtml(m.GetProperty("color").GetString() ?? "#bb0000").ToArgb();
+                    _config.LightingSet = true;
+                    _config.Save();
+                    AsusHid.SetAura((AsusHid.AuraMode)_config.LightMode, Color.FromArgb(_config.LightColor), (AsusHid.AuraSpeed)_config.LightSpeed);
+                    break;
+                case "lightBar":
+                    _config.LightBarAwake = Bool();
+                    _config.LightingSet = true;
+                    _config.Save();
+                    AsusHid.SetPower(new AsusHid.AuraPower(AwakeBar: _config.LightBarAwake));
+                    break;
+                case "gameEnabled": _config.GameModeEnabled = Bool(); _config.Save(); break;
+                case "games":
+                    _config.GameExecutables = (m.GetProperty("value").GetString() ?? "")
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+                    _config.Save();
+                    break;
+                case "gameUv": _config.GameUndervolt = Math.Clamp(Int(), -50, 0); _config.Save(); break;
+                case "gameTarget": _config.GameTempTarget = Math.Clamp(Int(), 75, 100); _config.Save(); break;
+                case "steady": _config.SteadyClocks = Bool(); _config.Save(); break;
+                case "fanBoost": _config.FanBoost = Bool(); _config.Save(); break;
+                case "targetFps": _config.TargetFps = Math.Clamp(Int(), 30, 240); _config.Save(); break;
+                case "lag": ReportLag(); break;
+                case "resetLearning": _game.Learner.Reset(); Post(new { type = "toast", text = "Learning reset: D-Helper will learn each game again." }); break;
+                case "advice": _game.RunAdvice(m.GetProperty("id").GetString() ?? ""); PostConfig(); break;
+                case "runAtLogin": AppConfig.RunAtLogin = Bool(); PostConfig(); break;
+                case "applyOnStart": _config.ApplyOnStartup = Bool(); _config.Save(); break;
+                case "export": RunExport(); break;
+                case "hide": Hide(); break;
+                case "quit": ExitApp(); break;
+            }
+        }
+        catch (Exception ex)
         {
-            Text = text,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = ButtonBg,
-            ForeColor = Fg,
-            AutoSize = true,
-            MinimumSize = new Size(96, 34),
-            Margin = new Padding(3),
-            Cursor = Cursors.Hand,
-        };
-        b.FlatAppearance.BorderColor = ButtonBg;
-        b.FlatAppearance.BorderSize = 2;
-        b.Click += onClick;
-        return b;
-    }
-
-    private static void Highlight<T>(Dictionary<T, Button> buttons, T selected) where T : notnull
-    {
-        foreach (var (key, b) in buttons)
-        {
-            bool on = EqualityComparer<T>.Default.Equals(key, selected);
-            b.FlatAppearance.BorderColor = on ? Accent : ButtonBg;
-            b.BackColor = on ? Color.FromArgb(20, 70, 110) : ButtonBg;
+            Log.Write("UI message error: " + ex.Message);
         }
     }
+
+    // ---------- hardware actions ----------
+
+    private void ApplySavedSettings()
+    {
+        ApplyMode(_config.PerformanceMode, save: false);
+        _acpi.SetBatteryLimit(_config.BatteryLimit);
+        SetKeyboardHardware(_config.KeyboardLevel);
+        if (_config.LightingSet)
+        {
+            AsusHid.SetAura((AsusHid.AuraMode)_config.LightMode, Color.FromArgb(_config.LightColor), (AsusHid.AuraSpeed)_config.LightSpeed);
+            AsusHid.SetPower(new AsusHid.AuraPower(AwakeBar: _config.LightBarAwake));
+        }
+    }
+
+    private void ApplyMode(int mode, bool save)
+    {
+        int result = _acpi.SetPerformanceMode(mode);
+        if (result != 1) Log.Write($"Performance mode {mode} not accepted (result {result})");
+        if (save)
+        {
+            _config.PerformanceMode = mode;
+            _config.Save();
+            PostConfig();
+        }
+        UpdateTrayMode(mode);
+    }
+
+    /// <summary>ROG laptops take brightness over USB HID; TUF/Vivobook-style models use the ACPI device instead.</summary>
+    private void SetKeyboardHardware(int level)
+    {
+        if (AsusHid.SetKeyboardBrightness(level) > 0) return;
+        if (_acpi.IsSupported(AsusAcpi.KeyboardBrightness)) _acpi.SetKeyboardBrightness(level);
+    }
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.Resume) return;
+        BeginInvoke(() =>
+        {
+            Log.Write("Resumed from sleep");
+            _game.OnResume();
+            if (_config.ApplyOnStartup) ApplySavedSettings();
+        });
+    }
+
+    // ---------- tray ----------
 
     private ContextMenuStrip BuildTrayMenu()
     {
@@ -409,186 +283,128 @@ public sealed class MainForm : Form
         }
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Open D-Helper", null, (_, _) => ShowFromTray());
+        menu.Items.Add("Export diagnostics", null, (_, _) => RunExport());
         menu.Items.Add("Quit", null, (_, _) => ExitApp());
         return menu;
     }
 
-    // ---------- Actions ----------
-
-    private void ApplyMode(int mode, bool save)
+    private void UpdateTrayMode(int mode)
     {
-        int result = _acpi.SetPerformanceMode(mode);
-        if (result != 1) Log.Write($"Performance mode {mode} not accepted (result {result})");
-        if (save)
-        {
-            _config.PerformanceMode = mode;
-            _config.Save();
-        }
-        HighlightMode(mode);
-    }
-
-    private void HighlightMode(int mode)
-    {
-        Highlight(_modeButtons, mode);
         foreach (var item in _trayModeItems)
             if (item != null) item.Checked = (int)item.Tag! == mode;
-        string name = mode switch { AsusAcpi.ModeSilent => "Silent", AsusAcpi.ModeTurbo => "Turbo", _ => "Balanced" };
-        if (_tray != null) _tray.Text = $"D-Helper — {name}";
     }
 
-    private void ApplyBattery()
+    private GameController.Health _lastTrayHealth;
+
+    private void UpdateTray(GameController.Snapshot s)
     {
-        if (_battery.Value == _config.BatteryLimit && AppConfig.Exists) return;
-        _acpi.SetBatteryLimit(_battery.Value);
-        _batteryValue.Text = $"{_battery.Value}%";
-        _config.BatteryLimit = _battery.Value;
-        _config.Save();
+        string temp = s.Tctl.HasValue ? $" · {s.Tctl:F0}°C" : "";
+        string text = $"D-Helper · {s.HealthTitle}{temp}";
+        _tray.Text = text.Length > 63 ? text[..63] : text;
+
+        // Notify once when throttling starts and the window is hidden.
+        if (s.Health == GameController.Health.Throttling && _lastTrayHealth != GameController.Health.Throttling && !Visible)
+            _tray.ShowBalloonTip(5000, "D-Helper: throttling", s.HealthDetail, ToolTipIcon.Warning);
+        _lastTrayHealth = s.Health;
     }
 
-    private void ApplyKeyboard(int level)
-    {
-        SetKeyboardHardware(level);
-        _config.KeyboardLevel = level;
-        _config.Save();
-        HighlightKeyboard(level);
-    }
+    // ---------- Export diagnostics ----------
 
-    private void HighlightKeyboard(int level) => Highlight(_kbButtons, level);
-
-    private void ReapplyLighting()
+    /// <summary>
+    /// Copies settings, learning data, the log, lag reports and the latest session logs into
+    /// Documents\D-Helper\diagnostics\yyyyMMdd-HHmmss, plus a summary of the live state. Returns the folder.
+    /// </summary>
+    private string ExportDiagnostics()
     {
-        if (!_config.LightingSet) return;
-        AsusHid.SetAura((AsusHid.AuraMode)_config.LightMode, Color.FromArgb(_config.LightColor), (AsusHid.AuraSpeed)_config.LightSpeed);
-        AsusHid.SetPower(new AsusHid.AuraPower(AwakeBar: _config.LightBarAwake));
-    }
+        string dest = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+            "D-Helper", "diagnostics", DateTime.Now.ToString("yyyyMMdd-HHmmss"));
+        Directory.CreateDirectory(dest);
 
-    private void ApplyLighting()
-    {
-        _config.LightingSet = true;
-        _config.Save();
-        AsusHid.SetAura((AsusHid.AuraMode)_config.LightMode, Color.FromArgb(_config.LightColor), (AsusHid.AuraSpeed)_config.LightSpeed);
-        HighlightLighting();
-    }
-
-    private void ApplyLightBarPower()
-    {
-        _config.LightingSet = true;
-        _config.Save();
-        AsusHid.SetPower(new AsusHid.AuraPower(AwakeBar: _config.LightBarAwake));
-    }
-
-    private void PickColor()
-    {
-        using var dialog = new ColorDialog { Color = Color.FromArgb(_config.LightColor), FullOpen = true };
-        if (dialog.ShowDialog(this) != DialogResult.OK) return;
-        _config.LightColor = dialog.Color.ToArgb();
-        ApplyLighting();
-    }
-
-    private void HighlightLighting()
-    {
-        if (_config.LightingSet)
+        // Files may be open for writing (the current session log), so copy with shared read access.
+        void CopyShared(string src, string name)
         {
-            Highlight(_lightModeButtons, _config.LightMode);
-            Highlight(_lightSpeedButtons, _config.LightSpeed);
-        }
-        var c = Color.FromArgb(_config.LightColor);
-        _colorButton.BackColor = c;
-        _colorButton.ForeColor = c.GetBrightness() > 0.5f ? Color.Black : Color.White;
-        _colorButton.FlatAppearance.BorderColor = c;
-    }
-
-    /// <summary>ROG laptops take brightness over USB HID; TUF/Vivobook-style models use the ACPI device instead.</summary>
-    private void SetKeyboardHardware(int level)
-    {
-        if (AsusHid.SetKeyboardBrightness(level) > 0) return;
-        if (_acpi.IsSupported(AsusAcpi.KeyboardBrightness)) _acpi.SetKeyboardBrightness(level);
-    }
-
-    private async void SwitchGpu(bool eco)
-    {
-        if (!_gpuSupported || _gpuBusy) return;
-        if (_acpi.GetGpuEco() == (eco ? 1 : 0)) return;
-
-        if (eco)
-        {
-            var answer = MessageBox.Show(this,
-                "Eco turns the dedicated GPU off.\n\nClose games and apps that use the dedicated GPU first, or they may crash.\n\nSwitch to Eco now?",
-                "D-Helper", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
-            if (answer != DialogResult.OK) return;
+            try
+            {
+                using var input = new FileStream(src, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var output = File.Create(Path.Combine(dest, name));
+                input.CopyTo(output);
+            }
+            catch (Exception ex) { File.AppendAllText(Path.Combine(dest, "export-errors.txt"), $"{name}: {ex.Message}{Environment.NewLine}"); }
         }
 
-        _gpuBusy = true;
-        _gpuStatus.Text = "Switching…";
-        foreach (var b in _gpuButtons.Values) b.Enabled = false;
+        string data = AppConfig.Folder;
+        foreach (var name in new[] { "config.json", "learning.json", "log.txt", "log-2.txt", "lag-reports.csv" })
+            if (File.Exists(Path.Combine(data, name))) CopyShared(Path.Combine(data, name), name);
+        foreach (var f in new DirectoryInfo(data).GetFiles("session-*.csv").OrderByDescending(f => f.LastWriteTime).Take(5))
+            CopyShared(f.FullName, f.Name);
+
+        var s = _game.GetSnapshot();
+        var summary = new
+        {
+            exported = DateTime.Now,
+            app = Assembly.GetExecutingAssembly().GetName().Version?.ToString(),
+            exe = Environment.ProcessPath,
+            dataFolder = data,
+            model = _model,
+            smu = _smu.Status,
+            logError = Log.LastError,
+            hotkey = _hotkeyRegistered,
+            state = s with { Events = s.Events.Take(40).ToList() },
+            learned = _game.Learner.Summary(),
+        };
+        File.WriteAllText(Path.Combine(dest, "summary.json"), JsonSerializer.Serialize(summary, new JsonSerializerOptions(Json) { WriteIndented = true }));
+        Log.Write("Diagnostics exported to " + dest);
+        return dest;
+    }
+
+    private void RunExport()
+    {
         try
         {
-            int result = await Task.Run(() => _acpi.SetGpuEco(eco));
-            if (result != 1) Log.Write($"GPU Eco={eco} not accepted (result {result})");
-            await Task.Delay(1500);
+            string dest = ExportDiagnostics();
+            Post(new { type = "toast", text = "Diagnostics saved to Documents\\D-Helper\\diagnostics\\" + Path.GetFileName(dest) });
+            System.Diagnostics.Process.Start("explorer.exe", $"\"{dest}\"");
         }
-        finally
+        catch (Exception ex)
         {
-            _gpuBusy = false;
-            RefreshGpuState();
+            Post(new { type = "toast", text = "Export failed: " + ex.Message });
         }
     }
 
-    private void RefreshGpuState()
+    // ---------- "Lag!" hotkey (Ctrl+Alt+L, works in-game) ----------
+
+    private const int WM_HOTKEY = 0x0312, LagHotkeyId = 0x4C41;
+    private const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
+    private bool _hotkeyRegistered;
+
+    protected override void OnHandleCreated(EventArgs e)
     {
-        int mux = _acpi.GetGpuMux();
-        int eco = _acpi.GetGpuEco();
-        _gpuSupported = eco >= 0;
-
-        if (!_gpuSupported)
-        {
-            _gpuStatus.Text = "GPU switching isn't supported on this model";
-            foreach (var b in _gpuButtons.Values) b.Enabled = false;
-            return;
-        }
-        if (mux == 0)
-        {
-            _gpuStatus.Text = "MUX is set to Ultimate (dGPU only), so Eco isn't available";
-            foreach (var b in _gpuButtons.Values) b.Enabled = false;
-            return;
-        }
-
-        foreach (var b in _gpuButtons.Values) b.Enabled = true;
-        Highlight(_gpuButtons, eco == 1);
-        _gpuStatus.Text = eco == 1 ? "Dedicated GPU is off" : "Dedicated GPU is on";
+        base.OnHandleCreated(e);
+        _hotkeyRegistered = RegisterHotKey(Handle, LagHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (uint)Keys.L);
+        if (!_hotkeyRegistered) Log.Write("Could not register Ctrl+Alt+L (another app uses it)");
     }
 
-    private void RefreshSensors()
+    protected override void WndProc(ref Message m)
     {
-        if (!Visible) return;
-
-        string Fmt(int temp, int rpm) =>
-            $"{(temp > 0 ? temp + "°C" : "--"),5}  {(rpm >= 0 ? rpm + " RPM" : "--"),9}";
-
-        int cpuT = _acpi.GetTemp(AsusAcpi.TempCpu);
-        int gpuT = _acpi.GetTemp(AsusAcpi.TempGpu);
-        int cpuF = _acpi.GetFanRpm(AsusAcpi.FanCpu);
-        int gpuF = _acpi.GetFanRpm(AsusAcpi.FanGpu);
-        _sensors.Text = $"CPU {Fmt(cpuT, cpuF)}\nGPU {Fmt(gpuT, gpuF)}";
-        RefreshGameStatus();
+        if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == LagHotkeyId) ReportLag();
+        base.WndProc(ref m);
     }
 
-    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs e)
+    private void ReportLag()
     {
-        if (e.Mode != PowerModes.Resume || !_config.ApplyOnStartup) return;
-        BeginInvoke(() =>
-        {
-            Log.Write("Resumed from sleep, re-applying settings");
-            _game?.OnResume();
-            ApplyMode(_config.PerformanceMode, save: false);
-            _acpi.SetBatteryLimit(_config.BatteryLimit);
-            SetKeyboardHardware(_config.KeyboardLevel);
-            ReapplyLighting();
-            RefreshGpuState();
-        });
+        System.Media.SystemSounds.Asterisk.Play(); // audible "got it" while in a fullscreen game
+        string verdict = _game.ReportLag();
+        Post(new { type = "toast", text = verdict });
+        if (!Visible) _tray.ShowBalloonTip(4000, "Lag reported", verdict, ToolTipIcon.Info);
     }
 
-    // ---------- Window / tray lifecycle ----------
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint vk);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    // ---------- window lifecycle ----------
 
     protected override void SetVisibleCore(bool value)
     {
@@ -598,13 +414,6 @@ public sealed class MainForm : Form
             value = false;
         }
         base.SetVisibleCore(value);
-    }
-
-    protected override void OnVisibleChanged(EventArgs e)
-    {
-        base.OnVisibleChanged(e);
-        if (Visible) { RefreshGpuState(); RefreshSensors(); _sensorTimer.Start(); }
-        else _sensorTimer.Stop();
     }
 
     private void ShowFromTray()
@@ -628,15 +437,17 @@ public sealed class MainForm : Form
     private void ExitApp()
     {
         _exiting = true;
+        if (_hotkeyRegistered) UnregisterHotKey(Handle, LagHotkeyId);
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
-        _game?.Dispose(); // leaves game mode and restores the safe undervolt
-        _sensorTimer.Stop();
+        _game.Dispose(); // leaves game mode and restores the safe undervolt
         _tray.Visible = false;
         _tray.Dispose();
         Application.Exit();
     }
 
-    // ---------- Helpers ----------
+    // ---------- helpers ----------
+
+    private static string ToHex(Color c) => $"#{c.R:x2}{c.G:x2}{c.B:x2}";
 
     private static string GetModelName()
     {
@@ -644,7 +455,10 @@ public sealed class MainForm : Form
         {
             using var key = Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\BIOS");
             var product = key?.GetValue("SystemProductName") as string;
-            return string.IsNullOrWhiteSpace(product) ? "ASUS laptop" : product.Trim();
+            if (string.IsNullOrWhiteSpace(product)) return "ASUS laptop";
+            product = product.Trim();
+            int us = product.IndexOf('_'); // "ROG Strix G513QY_G513QY" -> "ROG Strix G513QY"
+            return us > 0 ? product[..us] : product;
         }
         catch { return "ASUS laptop"; }
     }
@@ -656,11 +470,16 @@ public sealed class MainForm : Form
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            using var brush = new SolidBrush(Accent);
-            g.FillEllipse(brush, 2, 2, 60, 60);
-            using var font = new Font("Segoe UI", 30f, FontStyle.Bold, GraphicsUnit.Pixel);
+            using var path = new GraphicsPath();
+            path.AddArc(2, 2, 24, 24, 180, 90); path.AddArc(38, 2, 24, 24, 270, 90);
+            path.AddArc(38, 38, 24, 24, 0, 90); path.AddArc(2, 38, 24, 24, 90, 90);
+            path.CloseFigure();
+            using var brush = new LinearGradientBrush(new Rectangle(0, 0, 64, 64), Color.FromArgb(255, 45, 72), Color.FromArgb(212, 20, 44), 90f);
+            g.FillPath(brush, path);
+            using var font = new Font("Segoe UI", 34f, FontStyle.Bold, GraphicsUnit.Pixel);
             var size = g.MeasureString("D", font);
-            g.DrawString("D", font, Brushes.White, (64 - size.Width) / 2, (64 - size.Height) / 2);
+            using var gold = new SolidBrush(Color.FromArgb(255, 197, 61));
+            g.DrawString("D", font, gold, (64 - size.Width) / 2, (64 - size.Height) / 2);
         }
         return Icon.FromHandle(bmp.GetHicon());
     }

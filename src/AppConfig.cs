@@ -19,10 +19,14 @@ public sealed class AppConfig
 
     // Game mode
     public bool GameModeEnabled { get; set; } = true;
-    public List<string> GameExecutables { get; set; } = new() { "bf6.exe" };
+    public List<string> GameExecutables { get; set; } = new();   // optional: games are detected automatically
     public int GameUndervolt { get; set; } = -40;   // Curve Optimizer all-core, only under sustained load
     public int SafeUndervolt { get; set; } = 0;     // used at all other times
     public int GameTempTarget { get; set; } = 93;   // CPU Tctl limit while gaming; fans boost 3 °C below it
+    public bool SteadyClocks { get; set; } = true;  // auto power cap: hold the CPU just under the limit instead of bouncing off it
+    public int MinPowerCapW { get; set; } = 25;     // never cap below this
+    public int TargetFps { get; set; } = 60;        // one goal for every game: hold this with the least power
+    public bool FanBoost { get; set; } = false;     // opt-in: max-cooling fan curve near the CPU limit (loud)
 
     public static string Folder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "D-Helper");
@@ -131,17 +135,29 @@ public static class Log
 {
     private static readonly object Sync = new();
 
+    public static string? LastError { get; private set; }
+
     public static void Write(string message)
     {
-        try
+        string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}";
+        lock (Sync)
         {
-            lock (Sync)
+            foreach (var name in new[] { "log.txt", "log-2.txt" })
             {
-                Directory.CreateDirectory(AppConfig.Folder);
-                File.AppendAllText(Path.Combine(AppConfig.Folder, "log.txt"),
-                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+                try
+                {
+                    Directory.CreateDirectory(AppConfig.Folder);
+                    // Shared access so a viewer (or another tool) holding the file open can't block logging.
+                    using var fs = new FileStream(Path.Combine(AppConfig.Folder, name), FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                    var bytes = System.Text.Encoding.UTF8.GetBytes(line);
+                    fs.Write(bytes, 0, bytes.Length);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    LastError = $"{name}: {ex.GetType().Name}: {ex.Message}";
+                }
             }
         }
-        catch { /* logging must never crash the app */ }
     }
 }

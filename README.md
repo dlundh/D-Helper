@@ -21,25 +21,66 @@ A small tray app for ASUS ROG / TUF laptops, built from the hardware protocol re
 
 Settings, a log and per-game CSV sessions are kept in `%APPDATA%\D-Helper\`.
 
-## Game mode
+## Dashboard
 
-When a listed game (default `bf6.exe`) runs, D-Helper:
+The window is a live dashboard (HTML in WebView2) that answers "is my laptop throttling right now?" at a glance:
 
-1. Switches to **Turbo** and sets the CPU temperature limit (default 93 °C).
-2. Applies the **game undervolt** (Curve Optimizer all-core, default −40) **only after 5 s of ≥ 40 % CPU load**,
-   and removes it **within about 2 s** when load drops below 25 % (menus, loading screens, alt-tab), or when the game closes.
-   At the desktop the safe offset (0) is always in effect, because a deep offset that is stable under load can crash at idle.
-3. **Ramps the fans first:** an aggressive fan curve kicks in 3 °C below the limit and turns off after 60 s well below it.
-4. **Crash guard:** if Windows goes down while the undervolt is on, or CPU hardware errors (WHEA) are logged,
+* **Verdict:** *Full speed* (gold), *Fixing it* (amber), *Throttling* (red) or *Cool and quiet*, with the reason in plain words.
+* **Temperature ring** against the CPU limit, plus tiles for effective CPU clock (with peak marker), SMU power, load and both fans.
+* **2-minute chart** of temperature and clock, with throttling moments shaded red.
+* **What D-Helper is doing:** a timeline of every automatic action. **How to fix it** cards appear when throttling persists,
+  some with one-click fixes.
+
+A tray balloon warns you if throttling starts while the window is hidden.
+
+## Game mode: least power for 60+ FPS
+
+There are no per-game settings. **Games are detected automatically**: any fullscreen foreground app that keeps
+presenting frames (≥ 20 fps for 5 s; browsers, video players and other desktop apps are excluded). D-Helper
+measures every game's frame rate itself from the graphics kernel's present events (ETW, recovered from G-Helper's
+FPS monitor) and works towards **one global goal: stay above the target FPS (default 60) with as little power,
+clock and fan noise as possible.**
+
+* **Efficient (default):** one power budget drives the performance mode (Silent ≤ 45 W, Balanced ≤ 85 W, Turbo above,
+  each with its own firmware fan curve) and the CPU power cap. With a clear margin (> +30 % FPS and good 1 % lows for
+  5 s) the budget drops 8 % at a time; when FPS gets close to the target (< +10 %, or 1 % lows < 85 %) it rises ~20 %
+  within 2 s. Easy games end up quiet and cool; you lose only frames you couldn't see the difference of.
+* **Max performance:** if a game can't reach the target even at full power, D-Helper switches to everything below
+  (Turbo, undervolt, fans, steady clocks, speed learning), and returns to Efficient once the game has 50 % to spare.
+* **Memory:** the budget each game settles at is remembered, so the next session starts right there.
+* `Ctrl+Alt+L` in Efficient mode immediately gives the game ~25 % more power.
+
+The mechanisms underneath:
+
+1. Sets the CPU temperature limit (default 93 °C) and picks the mode from the power budget. ASUS firmware sometimes
+   resets limits mid-game; D-Helper checks them every second and puts them back within 3 s.
+2. Applies the **game undervolt** (Curve Optimizer all-core, default −40) after 3 s at ≥ 25 % CPU load,
+   or **immediately when throttling is detected**. It stays on through normal play and is only removed when the CPU is
+   truly idle (< 12 % for 5 s, e.g. alt-tabbed) or the game closes, because a deep offset that is stable under load can
+   crash at idle. At the desktop the safe offset (0) is always in effect.
+3. **Fans first:** an aggressive fan curve kicks in 3 °C below the limit, or at once when throttling is detected.
+4. **Throttle detection** every second: thermal limit, power limit, or the effective clock falling below 85 % of its
+   recent peak under load. If it persists 15 s with undervolt and fan boost already on, D-Helper suggests next steps.
+5. **Steady clocks (auto power cap):** if the CPU keeps hitting its limit even with the fans boosted, D-Helper lowers
+   the CPU power limit ~6 % every 3 s until it sits just under the limit, giving a slightly lower but steady clock
+   instead of boost-and-crash stutter. After 10 s with 5 °C of headroom it gives power back ~5 % at a time, and the
+   original limits return when the game closes. (Tested: capping a 133 W draw to 80 W cut Tctl from 95 to 85 °C in 1 s.)
+6. **Report lag — `Ctrl+Alt+L`, works in-game:** plays a short sound, records the moment (chart marker, timeline,
+   `lag-reports.csv`) and checks whether the CPU was the bottleneck. If it was, D-Helper reacts harder at once
+   (fans maxed, power cap stepped down ~12 %); if not, it tells you the stutter likely came from the GPU, network or game.
+7. **Crash guard:** if Windows goes down while the undervolt is on, or CPU hardware errors (WHEA) are logged,
    the game undervolt is made 5 less aggressive automatically.
-5. Logs a CSV of temperature, power, load, undervolt state and fan speed for each session.
+8. Logs a CSV of load, effective clock, temperature, power, power cap, lag marks, undervolt state and fan speed for each session.
+
+The CPU temperature limit can be set from 75 to 100 °C (the Ryzen 9 5980HX's own maximum is 105 °C).
 
 Undervolt and temperature-limit settings live in the CPU and reset at every reboot.
 The SMU code only writes on AMD Cezanne (Ryzen 5000 mobile) CPUs; on anything else Game mode shows as unavailable.
 
 ## Requirements
 
-* Windows 10/11 x64 and the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0)
+* Windows 10/11 x64, the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) and the
+  Microsoft Edge WebView2 Runtime (built into Windows 11)
 * ASUS System Control Interface driver (provides `\\.\ATKACPI`; present if Armoury Crate or G-Helper works)
 * [PawnIO](https://pawnio.eu/) driver for Game mode (G-Helper installs it). D-Helper runs as administrator because of it.
 
@@ -59,6 +100,18 @@ dotnet publish -c Release -o ..\app -p:PublishSingleFile=true -p:DebugType=none
 
 The build output in `app\` is `DHelper.exe` plus `RyzenSMU.bin`, which must stay next to the exe.
 
+Optional shortcuts that start D-Helper through its sign-in task (no UAC prompt) with the D-Helper icon; pin the Start
+menu one to the taskbar and it shares a button with the running window:
+
+```powershell
+Copy-Item src\DHelper.ico app\
+.\tools\make-shortcut.ps1 -Path "$([Environment]::GetFolderPath('Desktop'))\D-Helper.lnk"
+# all-users Start menu (run as administrator):
+.\tools\make-shortcut.ps1 -Path "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\D-Helper.lnk"
+```
+
+Start D-Helper before games that use EA anti-cheat: it blocks starting frame-rate tracing while the game runs.
+
 ## Layout
 
 ```
@@ -66,8 +119,12 @@ src/
   AsusAcpi.cs        ATKACPI DeviceIoControl wrapper (modes, battery, sensors, fan curves)
   AsusHid.cs         USB HID: keyboard backlight, Aura lighting and light bar (SetupAPI + hid.dll)
   RyzenSmu.cs        Ryzen SMU via PawnIO: undervolt, Tctl limit, power limits, PM-table telemetry
-  GameController.cs  game detection, load-gated undervolt, fan boost, crash guard, CSV logging
-  MainForm.cs        window + tray UI
+  GameController.cs  auto game detection, efficient/performance strategy, load-gated undervolt, fan boost,
+                     steady clocks, crash guard, CSV logging
+  FpsMonitor.cs      per-process FPS and 1 % lows from DxgKrnl present events (ETW)
+  CapLearner.cs      per-game memory: efficient budget and fastest steady power cap
+  MainForm.cs        window, tray and WebView2 bridge (JSON messages to/from the dashboard)
+  ui/index.html      the dashboard (embedded; opens standalone in a browser with sample data)
   AppConfig.cs       settings, start at sign-in (Task Scheduler), log
   RyzenSMU.bin       signed PawnIO RyzenSMU module (third-party, see below)
 docs/

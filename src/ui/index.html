@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>D-Helper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Rubik:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy-0: #0c0e22; --navy-1: #11132a; --navy-2: #151838; --navy-3: #1b1e45;
+    --glass: rgba(12, 14, 34, 0.72); --glass-2: rgba(255, 255, 255, 0.05);
+    --line: rgba(255, 255, 255, 0.10); --line-2: rgba(255, 255, 255, 0.18);
+    --text: #ffffff; --text-2: rgba(255, 255, 255, 0.72); --text-3: rgba(255, 255, 255, 0.48);
+    --red: #d4142c; --red-hi: #ff2d48; --red-glow: rgba(212, 20, 44, 0.35);
+    --gold-1: #ffe08a; --gold-2: #ffc53d; --gold-3: #e0940a;
+    --green: #36d399; --green-glow: rgba(54, 211, 153, 0.30);
+    --amber: #ffb020;
+    --radius: 20px;
+    --head: "Rubik", "Segoe UI", sans-serif;
+    --body: "Inter", "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: var(--body); color: var(--text); overflow-x: hidden;
+    background:
+      radial-gradient(900px 500px at 88% 8%, rgba(212, 20, 44, 0.30), transparent 60%),
+      radial-gradient(700px 520px at 6% 96%, rgba(255, 197, 61, 0.12), transparent 60%),
+      linear-gradient(180deg, var(--navy-0) 0%, var(--navy-1) 55%, var(--navy-2) 100%);
+    background-attachment: fixed;
+  }
+  body::before { /* dot grid */
+    content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .5;
+    background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  .app { position: relative; max-width: 1320px; margin: 0 auto; padding: 18px 26px 28px; }
+
+  /* ---------- header ---------- */
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+  .logo { font-family: var(--head); font-weight: 800; font-size: 26px; letter-spacing: -0.8px; display: flex; align-items: center; gap: 10px; }
+  .logo-mark {
+    width: 38px; height: 38px; border-radius: 12px; display: grid; place-items: center; font-size: 22px;
+    background: linear-gradient(160deg, var(--red-hi), var(--red)); box-shadow: 0 8px 24px var(--red-glow), inset 0 1px 0 rgba(255,255,255,.25);
+  }
+  .logo .gold { background: linear-gradient(var(--gold-1) 10%, var(--gold-2) 45%, var(--gold-3) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px;
+    background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1px rgba(255,255,255,.14);
+    font-family: var(--head); font-weight: 600; font-size: 13px; color: rgba(255,255,255,.9); white-space: nowrap;
+  }
+  .badge { padding: 3px 9px; border-radius: 999px; background: var(--gold-2); color: #3a2600; font-family: var(--head); font-weight: 700; font-size: 11px; letter-spacing: .4px; }
+  .spacer { flex: 1; }
+  .status-pill { font-size: 13px; padding: 8px 16px; transition: all .3s; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-3); }
+  .s-optimal .dot { background: var(--green); box-shadow: 0 0 0 4px var(--green-glow); }
+  .s-watch .dot { background: var(--amber); box-shadow: 0 0 0 4px rgba(255,176,32,.3); animation: pulse 1s infinite; }
+  .s-throttling { background: rgba(212,20,44,.22); box-shadow: inset 0 0 0 1px rgba(255,45,72,.6); }
+  .s-throttling .dot { background: var(--red-hi); box-shadow: 0 0 0 4px var(--red-glow); animation: pulse .7s infinite; }
+  .s-idle .dot { background: #7aa2ff; box-shadow: 0 0 0 4px rgba(122,162,255,.25); }
+  @keyframes pulse { 50% { transform: scale(1.35); opacity: .6; } }
+
+  .btn {
+    font-family: var(--head); font-weight: 700; font-size: 14px; letter-spacing: .2px; cursor: pointer; border: 0;
+    border-radius: 999px; padding: 10px 18px; color: #fff; transition: transform .12s, box-shadow .2s, background .2s;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-red { background: var(--red); box-shadow: 0 8px 24px var(--red-glow); }
+  .btn-red:hover { background: #e3182f; box-shadow: 0 10px 30px rgba(212,20,44,.5); }
+  .btn-ghost { background: rgba(255,255,255,.08); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.22); }
+  .btn-ghost:hover { background: rgba(255,255,255,.14); }
+  .btn-sm { font-size: 12.5px; padding: 7px 14px; }
+  .kbd { margin-left: 6px; padding: 2px 7px; border-radius: 6px; background: rgba(0,0,0,.25); font: 600 11px var(--body); letter-spacing: .2px; }
+  .bar .cap { position: absolute; top: -5px; width: 3px; height: 18px; background: var(--gold-1); border-radius: 2px; box-shadow: 0 0 8px rgba(255,197,61,.8); transition: left .8s; }
+
+  /* ---------- layout ---------- */
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; }
+  .card {
+    background: var(--glass); border-radius: var(--radius); padding: 20px 22px; position: relative;
+    box-shadow: 0 30px 60px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.09);
+    backdrop-filter: blur(10px);
+  }
+  .eyebrow { display: flex; align-items: center; gap: 10px; font-family: var(--head); font-weight: 700; font-size: 11.5px; letter-spacing: 1.6px; text-transform: uppercase; color: #ff4d63; margin-bottom: 12px; }
+  .eyebrow::before { content: ""; width: 22px; height: 2px; border-radius: 2px; background: currentColor; }
+  .eyebrow .right { margin-left: auto; color: var(--text-3); letter-spacing: .6px; text-transform: none; font-weight: 600; }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: minmax(0,1fr) 230px; gap: 18px; align-items: center; padding: 26px 28px; overflow: hidden; }
+  .hero h1 { font-family: var(--head); font-weight: 800; font-size: 54px; line-height: 1; letter-spacing: -2px; margin: 0 0 12px; }
+  .gold-text { background: linear-gradient(var(--gold-1) 10%, var(--gold-2) 45%, var(--gold-3) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .red-text { background: linear-gradient(#ff8a98 0%, var(--red-hi) 50%, var(--red) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .blue-text { background: linear-gradient(#c9d8ff, #7aa2ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .underline { display: block; width: 190px; height: 10px; margin: -4px 0 14px; }
+  .hero p { margin: 0 0 18px; color: var(--text-2); font-size: 16.5px; line-height: 1.55; max-width: 560px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); color: var(--text-2); }
+  .chip.on { color: #fff; background: rgba(54,211,153,.14); box-shadow: inset 0 0 0 1px rgba(54,211,153,.45); }
+  .chip.gold { color: #3a2600; background: linear-gradient(var(--gold-1), var(--gold-2)); box-shadow: 0 6px 18px rgba(255,197,61,.25); }
+  .chip.warn { color: #fff; background: rgba(212,20,44,.25); box-shadow: inset 0 0 0 1px rgba(255,45,72,.55); }
+  .check { color: var(--gold-2); font-weight: 800; }
+
+  /* ring gauge */
+  .ring { position: relative; width: 230px; height: 230px; }
+  .ring svg { width: 100%; height: 100%; transform: rotate(135deg); }
+  .ring .track { stroke: rgba(255,255,255,.08); }
+  .ring .val { transition: stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1), stroke .4s; filter: drop-shadow(0 0 10px rgba(255,197,61,.35)); }
+  .ring .center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+  .ring .big { font-family: var(--head); font-weight: 800; font-size: 56px; letter-spacing: -2px; line-height: 1; }
+  .ring .big small { font-size: 24px; letter-spacing: 0; color: var(--text-2); margin-left: 6px; }
+  .ring .lbl { color: var(--text-3); font-size: 12.5px; font-weight: 600; margin-top: 6px; letter-spacing: .3px; }
+  .ring .limit { font-family: var(--head); font-weight: 700; font-size: 13px; margin-top: 8px; color: var(--text-2); line-height: 1.35; max-width: 140px; margin-left: auto; margin-right: auto; }
+  .ring .limit small { display: block; font-family: var(--body); font-weight: 600; font-size: 11px; color: var(--text-3); }
+
+  /* metric tiles */
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 14px; margin-top: 18px; }
+  .tile { padding: 16px 18px; }
+  .tile .k { color: var(--text-3); font-size: 12px; font-weight: 600; letter-spacing: .5px; text-transform: uppercase; }
+  .tile .v { font-family: var(--head); font-weight: 800; font-size: 32px; letter-spacing: -1px; margin: 6px 0 10px; }
+  .tile .v small { font-size: 15px; color: var(--text-2); letter-spacing: 0; font-weight: 600; margin-left: 3px; }
+  .bar { height: 8px; border-radius: 99px; background: rgba(255,255,255,.08); position: relative; overflow: visible; }
+  .bar > i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--gold-3), var(--gold-2), var(--gold-1)); transition: width .8s cubic-bezier(.2,.8,.2,1), background .4s; }
+  .bar.red > i { background: linear-gradient(90deg, #8f0d1e, var(--red), var(--red-hi)); }
+  .bar.green > i { background: linear-gradient(90deg, #138a62, var(--green)); }
+  .bar .mark { position: absolute; top: -4px; width: 2px; height: 16px; background: #fff; border-radius: 2px; opacity: .7; transition: left .8s; }
+  .tile .sub { color: var(--text-3); font-size: 12px; margin-top: 8px; display: flex; justify-content: space-between; }
+  .fans { display: grid; gap: 9px; margin-top: 8px; }
+  .fan-row { display: grid; grid-template-columns: 34px 1fr 58px; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
+  .fan-row b { font-family: var(--head); color: #fff; text-align: right; }
+  .spin { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* chart */
+  .chart-card { margin-top: 18px; }
+  canvas { width: 100%; height: 190px; display: block; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-2); }
+  .legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+
+  /* side panel */
+  .side { display: flex; flex-direction: column; gap: 18px; }
+  .gm-head { display: flex; align-items: center; gap: 12px; }
+  .gm-title { font-family: var(--head); font-weight: 800; font-size: 22px; letter-spacing: -.6px; }
+  .gm-sub { color: var(--text-2); font-size: 13.5px; margin-top: 4px; line-height: 1.45; }
+  .uv-big { margin-top: 14px; display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; background: rgba(255,255,255,.04); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+  .uv-val { font-family: var(--head); font-weight: 800; font-size: 34px; letter-spacing: -1px; min-width: 76px; }
+  .uv-desc { font-size: 12.5px; color: var(--text-2); line-height: 1.45; }
+  .learn { margin-top: 12px; display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 14px; background: rgba(122,162,255,.10); box-shadow: inset 0 0 0 1px rgba(122,162,255,.35); font-size: 12.8px; color: var(--text-2); line-height: 1.45; }
+  .learn b { color: #fff; font-family: var(--head); }
+  .learn-ico { color: #7aa2ff; font-size: 14px; animation: pulse 1.6s infinite; margin-top: 1px; }
+  .learned-list { display: grid; gap: 8px; margin: 12px 0; }
+  .learned-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 14px; border-radius: 12px; background: rgba(255,255,255,.04); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); font-size: 13px; color: var(--text-2); }
+  .learned-row b { color: #fff; font-family: var(--head); }
+  .advice { display: grid; gap: 10px; }
+  .advice-card { padding: 14px 16px; border-radius: 16px; background: rgba(212,20,44,.12); box-shadow: inset 0 0 0 1px rgba(255,45,72,.35); font-size: 13.5px; line-height: 1.5; color: rgba(255,255,255,.88); }
+  .advice-card .btn { margin-top: 10px; }
+  .timeline { display: grid; gap: 2px; max-height: 300px; overflow-y: auto; padding-right: 4px; }
+  .timeline::-webkit-scrollbar { width: 6px; } .timeline::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 6px; }
+  .ev { display: grid; grid-template-columns: 52px 12px 1fr; gap: 8px; padding: 7px 0; font-size: 12.8px; color: var(--text-2); line-height: 1.4; border-bottom: 1px dashed rgba(255,255,255,.06); }
+  .ev time { color: var(--text-3); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 1px; }
+  .ev .d { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; background: rgba(255,255,255,.3); }
+  .ev.action .d { background: var(--gold-2); } .ev.good .d { background: var(--green); } .ev.warn .d { background: var(--red-hi); }
+  .ev.warn { color: #fff; }
+  .empty { color: var(--text-3); font-size: 13px; padding: 6px 0; }
+
+  /* ---------- controls ---------- */
+  .controls { margin-top: 18px; }
+  .tabs { display: flex; gap: 6px; padding: 5px; border-radius: 999px; background: rgba(255,255,255,.05); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); width: max-content; margin-bottom: 18px; }
+  .tab { font-family: var(--head); font-weight: 700; font-size: 13.5px; padding: 9px 18px; border-radius: 999px; color: var(--text-2); cursor: pointer; border: 0; background: transparent; }
+  .tab.active { color: #fff; background: var(--red); box-shadow: 0 6px 18px var(--red-glow); }
+  .pane { display: none; } .pane.active { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 22px; }
+  .ctl h3 { font-family: var(--head); font-weight: 800; font-size: 17px; letter-spacing: -.3px; margin: 0 0 4px; }
+  .ctl p { margin: 0 0 12px; color: var(--text-3); font-size: 12.8px; line-height: 1.45; }
+  .seg { display: flex; flex-wrap: wrap; gap: 8px; }
+  .seg button { font-family: var(--head); font-weight: 700; font-size: 13.5px; padding: 10px 16px; border-radius: 999px; border: 0; cursor: pointer; color: #fff; background: rgba(255,255,255,.07); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.16); transition: all .15s; }
+  .seg button:hover { background: rgba(255,255,255,.12); }
+  .seg button.on { background: linear-gradient(var(--gold-1), var(--gold-2)); color: #3a2600; box-shadow: 0 8px 22px rgba(255,197,61,.28); }
+  .seg button:disabled { opacity: .35; cursor: not-allowed; }
+  .slider-row { display: flex; align-items: center; gap: 14px; }
+  input[type=range] { -webkit-appearance: none; appearance: none; flex: 1; height: 8px; border-radius: 99px; background: linear-gradient(90deg, var(--gold-2) var(--p, 50%), rgba(255,255,255,.1) var(--p, 50%)); outline: none; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 5px rgba(255,197,61,.35), 0 4px 10px rgba(0,0,0,.4); cursor: pointer; }
+  .val-big { font-family: var(--head); font-weight: 800; font-size: 24px; min-width: 70px; text-align: right; }
+  .stepper { display: inline-flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); }
+  .stepper button { width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer; font-size: 18px; font-weight: 700; color: #fff; background: rgba(255,255,255,.08); }
+  .stepper button:hover { background: var(--red); }
+  .stepper span { font-family: var(--head); font-weight: 800; font-size: 20px; min-width: 70px; text-align: center; }
+  .text-in { width: 100%; padding: 11px 16px; border-radius: 14px; border: 0; outline: none; font: 500 14px var(--body); color: #fff; background: rgba(255,255,255,.06); box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.14); }
+  .text-in:focus { box-shadow: inset 0 0 0 1.5px var(--gold-2); }
+  .toggle { display: flex; align-items: center; gap: 12px; cursor: pointer; font-size: 14px; color: var(--text-2); margin: 6px 0; user-select: none; }
+  .toggle input { display: none; }
+  .toggle .sw { width: 44px; height: 26px; border-radius: 99px; background: rgba(255,255,255,.12); position: relative; transition: background .2s; flex: none; }
+  .toggle .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .2s; }
+  .toggle input:checked + .sw { background: var(--red); box-shadow: 0 4px 14px var(--red-glow); }
+  .toggle input:checked + .sw::after { left: 21px; }
+  .swatches { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+  .swatch { width: 32px; height: 32px; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 2px rgba(255,255,255,.2); transition: transform .12s; }
+  .swatch:hover { transform: scale(1.12); }
+  .swatch.on { box-shadow: 0 0 0 3px var(--navy-0), 0 0 0 5px #fff; }
+  input[type=color] { width: 32px; height: 32px; border: 0; padding: 0; border-radius: 50%; background: none; cursor: pointer; }
+  input[type=color]::-webkit-color-swatch-wrapper { padding: 0; } input[type=color]::-webkit-color-swatch { border: 0; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(255,255,255,.3); }
+  .note { font-size: 12.5px; color: var(--text-3); margin-top: 10px; }
+  footer { margin-top: 18px; display: flex; gap: 10px; align-items: center; color: var(--text-3); font-size: 12px; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(120px); padding: 14px 20px; border-radius: 16px; background: #fff; color: var(--navy-0); font-weight: 600; box-shadow: 0 20px 50px rgba(0,0,0,.5); transition: transform .35s cubic-bezier(.2,.8,.2,1); z-index: 9; max-width: 640px; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  @media (max-width: 1100px) {
+    .grid { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo"><div class="logo-mark">⚡</div><span><span class="gold">D</span>-Helper</span></div>
+    <span class="pill" id="model">ROG laptop</span>
+    <div class="spacer"></div>
+    <span class="pill status-pill" id="statusPill"><span class="dot"></span><span id="statusText">Starting</span></span>
+    <button class="btn btn-red btn-sm" data-cmd="lag" title="Felt a stutter? Report it, in-game too">⚑ Report lag <span class="kbd" id="hotkeyHint">Ctrl+Alt+L</span></button>
+    <button class="btn btn-ghost btn-sm" data-cmd="hide">Hide to tray</button>
+  </header>
+
+  <div class="grid">
+    <main>
+      <!-- hero -->
+      <section class="card hero">
+        <div>
+          <div class="eyebrow">Live performance</div>
+          <h1 id="heroTitle" class="gold-text">Starting…</h1>
+          <svg class="underline" viewBox="0 0 190 10" preserveAspectRatio="none"><path id="heroLine" d="M2 7 Q 60 1 188 5" stroke="#d4142c" stroke-width="4" fill="none" stroke-linecap="round"/></svg>
+          <p id="heroDetail">Reading sensors…</p>
+          <div class="chips" id="chips"></div>
+        </div>
+        <div class="ring">
+          <svg viewBox="0 0 200 200">
+            <defs>
+              <linearGradient id="gGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe08a"/><stop offset=".5" stop-color="#ffc53d"/><stop offset="1" stop-color="#e0940a"/></linearGradient>
+              <linearGradient id="gRed" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a98"/><stop offset="1" stop-color="#d4142c"/></linearGradient>
+              <linearGradient id="gGreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9ff0cf"/><stop offset="1" stop-color="#36d399"/></linearGradient>
+            </defs>
+            <circle class="track" cx="100" cy="100" r="84" fill="none" stroke-width="16" stroke-linecap="round" stroke-dasharray="395.8 527.8"/>
+            <circle class="val" id="ringVal" cx="100" cy="100" r="84" fill="none" stroke="url(#gGold)" stroke-width="16" stroke-linecap="round" stroke-dasharray="395.8 527.8" stroke-dashoffset="395.8"/>
+          </svg>
+          <div class="center">
+            <div class="big" id="ringTemp">--<small>°C</small></div>
+            <div class="lbl">CPU TEMPERATURE</div>
+            <div class="limit" id="ringLimit">limit --°C</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- tiles -->
+      <section class="tiles">
+        <div class="card tile">
+          <div class="k">CPU clock</div>
+          <div class="v" id="clockV">--<small>GHz</small></div>
+          <div class="bar" id="clockBar"><i style="width:0"></i><span class="mark" id="clockPeak" style="left:0"></span></div>
+          <div class="sub"><span id="clockSub">peak --</span><span id="loadSub">load --</span></div>
+        </div>
+        <div class="card tile">
+          <div class="k">CPU power</div>
+          <div class="v" id="powerV">--<small>W</small></div>
+          <div class="bar" id="powerBar"><i style="width:0"></i><span class="cap" id="powerCapMark" style="display:none"></span></div>
+          <div class="sub"><span id="powerSub">limit --</span><span id="powerState"></span></div>
+        </div>
+        <div class="card tile">
+          <div class="k">Frame rate</div>
+          <div class="v" id="fpsV">--<small>fps</small></div>
+          <div class="bar green" id="fpsBar"><i style="width:0"></i><span class="mark" id="fpsTarget" style="left:50%"></span></div>
+          <div class="sub"><span id="fpsSub">1% low --</span><span id="fpsTargetLbl">target --</span></div>
+        </div>
+        <div class="card tile">
+          <div class="k">Fans <span id="boostTag"></span></div>
+          <div class="fans">
+            <div class="fan-row"><span>CPU</span><div class="bar"><i id="fanCpuBar" style="width:0"></i></div><b id="fanCpu">--</b></div>
+            <div class="fan-row"><span>GPU</span><div class="bar"><i id="fanGpuBar" style="width:0"></i></div><b id="fanGpu">--</b></div>
+          </div>
+          <div class="sub" style="margin-top:12px"><span>rpm</span><span id="fanMode"></span></div>
+        </div>
+      </section>
+
+      <!-- chart -->
+      <section class="card chart-card">
+        <div class="eyebrow">Last 2 minutes <span class="right legend"><span><i style="background:#ffc53d"></i>Temperature</span><span><i style="background:#fff"></i>Clock</span><span><i style="background:#36d399"></i>FPS</span><span><i style="background:rgba(212,20,44,.7);height:8px"></i>Throttling</span><span><i style="background:#7aa2ff;width:3px;height:10px"></i>Lag report</span></span></div>
+        <canvas id="chart"></canvas>
+      </section>
+
+      <!-- controls -->
+      <section class="card controls">
+        <div class="tabs" id="tabs">
+          <button class="tab active" data-tab="perf">Performance</button>
+          <button class="tab" data-tab="game">Game mode</button>
+          <button class="tab" data-tab="light">Lighting</button>
+          <button class="tab" data-tab="opts">Options</button>
+        </div>
+
+        <div class="pane active" id="pane-perf">
+          <div class="ctl">
+            <h3>Performance mode</h3>
+            <p>Game mode switches to Turbo by itself while a game runs.</p>
+            <div class="seg" id="modeSeg">
+              <button data-mode="2">Silent</button><button data-mode="0">Balanced</button><button data-mode="1">Turbo</button>
+            </div>
+          </div>
+          <div class="ctl">
+            <h3>Battery charge limit</h3>
+            <p>Stops charging at this level to keep the battery healthy.</p>
+            <div class="slider-row"><input type="range" id="battery" min="40" max="100" step="5"><span class="val-big" id="batteryV">--</span></div>
+          </div>
+          <div class="ctl">
+            <h3>GPU mode</h3>
+            <p id="gpuNote">Checking support…</p>
+            <div class="seg" id="gpuSeg"><button data-gpu="eco" disabled>Eco</button><button data-gpu="std" disabled>Standard</button></div>
+          </div>
+        </div>
+
+        <div class="pane" id="pane-game">
+          <div class="ctl">
+            <h3>Game mode</h3>
+            <p>Games are detected automatically: any fullscreen app that's drawing frames. D-Helper then gives it the least power, clock and fan noise that keeps it above your target, and goes all-out only when a game needs it.</p>
+            <label class="toggle"><input type="checkbox" id="gameEnabled"><span class="sw"></span>Manage games automatically</label>
+            <h3 style="margin-top:16px">Target frame rate</h3>
+            <div class="stepper"><button data-step="fps" data-d="-5">−</button><span id="targetFpsV">--</span><button data-step="fps" data-d="5">+</button></div>
+            <div class="note">One goal for every game. Anything above it is spent on silence and cooler temperatures instead.</div>
+          </div>
+          <div class="ctl">
+            <h3>Undervolt under load</h3>
+            <p>Curve Optimizer, all cores. Applied while the game keeps the CPU busy, removed at idle.</p>
+            <div class="stepper"><button data-step="uv" data-d="-5">−</button><span id="uvV">--</span><button data-step="uv" data-d="5">+</button></div>
+            <div class="note" id="safeNote">At the desktop: 0</div>
+          </div>
+          <div class="ctl">
+            <h3>CPU temperature limit</h3>
+            <p>The CPU slows itself down at this temperature. Fans max out 3°C before it.</p>
+            <div class="stepper"><button data-step="target" data-d="-1">−</button><span id="targetV">--</span><button data-step="target" data-d="1">+</button></div>
+            <div class="note">Range 75–100°C (the chip's own maximum is 105°C). Applies within a second, even mid-game.</div>
+          </div>
+          <div class="ctl">
+            <h3>Steady clocks</h3>
+            <p>When the CPU keeps hitting its limit even with max fans, D-Helper lowers its power step by step until it sits just under the limit: a slightly lower but steady clock instead of boost-and-crash stutter. Power comes back when there's headroom.</p>
+            <label class="toggle"><input type="checkbox" id="steadyClocks"><span class="sw"></span>Auto power cap while gaming</label>
+            <label class="toggle"><input type="checkbox" id="fanBoost"><span class="sw"></span>Max fans when the CPU hits its limit (loud)</label>
+            <div class="note">Off: fans follow the normal Silent / Balanced / Turbo curve.</div>
+            <div class="note">Felt a stutter? Press <b id="hotkeyHint2">Ctrl+Alt+L</b> in-game. D-Helper records the moment and, if the CPU was at its limit, reacts harder right away.</div>
+          </div>
+          <div class="ctl">
+            <h3>What D-Helper has learned</h3>
+            <p>Every few minutes it compares the current power cap with 5 W more and 5 W less, and keeps whichever gives the fastest steady clock. Lag reports count against a cap. The best cap is remembered per game.</p>
+            <div class="learned-list" id="learnedList"><div class="empty">Nothing yet. Play a game from your list.</div></div>
+            <button class="btn btn-ghost btn-sm" data-cmd="resetLearning">Reset learning</button>
+          </div>
+        </div>
+
+        <div class="pane" id="pane-light">
+          <div class="ctl">
+            <h3>Keyboard backlight</h3>
+            <p>Brightness of the keys.</p>
+            <div class="seg" id="kbSeg"><button data-kb="0">Off</button><button data-kb="1">Low</button><button data-kb="2">Medium</button><button data-kb="3">High</button></div>
+          </div>
+          <div class="ctl">
+            <h3>Effect</h3>
+            <p>Applies to the keyboard and the light bar together.</p>
+            <div class="seg" id="fxSeg"><button data-fx="0">Static</button><button data-fx="1">Breathe</button><button data-fx="2">Color cycle</button><button data-fx="3">Rainbow</button><button data-fx="10">Strobe</button></div>
+          </div>
+          <div class="ctl">
+            <h3>Color &amp; speed</h3>
+            <div class="swatches" id="swatches"></div>
+            <div class="seg" id="speedSeg" style="margin-top:14px"><button data-speed="0">Slow</button><button data-speed="1">Normal</button><button data-speed="2">Fast</button></div>
+            <label class="toggle" style="margin-top:12px"><input type="checkbox" id="lightBar"><span class="sw"></span>Light bar on</label>
+          </div>
+        </div>
+
+        <div class="pane" id="pane-opts">
+          <div class="ctl">
+            <h3>Start-up</h3>
+            <label class="toggle"><input type="checkbox" id="runAtLogin"><span class="sw"></span>Start D-Helper when I sign in</label>
+            <label class="toggle"><input type="checkbox" id="applyOnStart"><span class="sw"></span>Re-apply my settings at start and after sleep</label>
+          </div>
+          <div class="ctl">
+            <h3>Status</h3>
+            <p id="smuStatus">…</p>
+            <p>Session logs: %APPDATA%\D-Helper</p>
+            <div style="display:flex; gap:8px; flex-wrap:wrap">
+              <button class="btn btn-red btn-sm" data-cmd="export">Export diagnostics</button>
+              <button class="btn btn-ghost btn-sm" data-cmd="quit">Quit D-Helper</button>
+            </div>
+            <div class="note">Saves settings, learning data, the log, lag reports and the last 5 game sessions to Documents\D-Helper\diagnostics and opens the folder.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="side">
+      <section class="card">
+        <div class="eyebrow">Game mode</div>
+        <div class="gm-head"><div>
+          <div class="gm-title" id="gmTitle">Waiting for a game</div>
+          <div class="gm-sub" id="gmSub">Launch a game from your list and D-Helper takes over.</div>
+        </div></div>
+        <div class="uv-big">
+          <div class="uv-val" id="uvBig">0</div>
+          <div class="uv-desc" id="uvDesc">Undervolt (Curve Optimizer). The game value is applied under load only.</div>
+        </div>
+        <div class="learn" id="learnBox" style="display:none">
+          <span class="learn-ico">◆</span>
+          <div><b id="learnLabel">Learning</b><div id="learnText"></div></div>
+        </div>
+      </section>
+
+      <section class="card" id="adviceCard" style="display:none">
+        <div class="eyebrow">How to fix it</div>
+        <div class="advice" id="advice"></div>
+      </section>
+
+      <section class="card" style="flex:1">
+        <div class="eyebrow">What D-Helper is doing</div>
+        <div class="timeline" id="timeline"><div class="empty">Nothing yet.</div></div>
+      </section>
+    </aside>
+  </div>
+  <footer><span>D-Helper · ASUS ACPI · USB HID · Ryzen SMU</span></footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const host = window.chrome && window.chrome.webview;
+  const send = msg => host ? host.postMessage(msg) : console.log("send", msg);
+  let cfg = null, lastLagCount = null;
+  const hist = []; // {temp, clock, thr, lim, lag}
+
+  // ---------- incoming ----------
+  function onMessage(m) {
+    if (m.type === "config") { cfg = m; renderConfig(); }
+    if (m.type === "state") renderState(m);
+    if (m.type === "toast") toast(m.text);
+  }
+  if (host) host.addEventListener("message", e => onMessage(e.data));
+
+  // ---------- render: live state ----------
+  function renderState(s) {
+    const pillCls = { Optimal: "s-optimal", Watch: "s-watch", Throttling: "s-throttling", Idle: "s-idle" }[s.health] || "";
+    $("statusPill").className = "pill status-pill " + pillCls;
+    $("statusText").textContent = { Optimal: "Optimal", Watch: "Fixing throttling", Throttling: "Throttling", Idle: "Idle" }[s.health] || "Starting";
+
+    const h = $("heroTitle");
+    h.textContent = s.healthTitle;
+    h.className = s.health === "Throttling" ? "red-text" : s.health === "Idle" ? "blue-text" : "gold-text";
+    $("heroLine").setAttribute("stroke", s.health === "Throttling" ? "#ff2d48" : s.health === "Watch" ? "#ffb020" : "#d4142c");
+    $("heroDetail").textContent = s.healthDetail;
+
+    const chips = [];
+    if (s.game) chips.push(`<span class="chip on"><span class="check">✓</span>${esc(s.game)} running</span>`);
+    if (s.game && s.strategy === "Efficient") chips.push(`<span class="chip gold">Efficient · ${esc(s.modeName || "")} · ${s.budgetW} W</span>`);
+    if (s.game && s.strategy === "Performance") chips.push(`<span class="chip warn">Max performance</span>`);
+    if (s.savingW >= 5) chips.push(`<span class="chip on">Saving ${s.savingW} W</span>`);
+    if (s.undervoltActive) chips.push(`<span class="chip gold">Undervolt ${s.undervoltValue} active</span>`);
+    if (s.coolingBoost) chips.push(`<span class="chip on"><span class="spin">✦</span>Fan boost</span>`);
+    if (s.powerCapW && s.strategy !== "Efficient") chips.push(`<span class="chip gold">Steady clocks · ${s.powerCapW} W cap</span>`);
+    if (s.thermalLimited) chips.push(`<span class="chip warn">Thermal limit</span>`);
+    if (s.powerLimited) chips.push(`<span class="chip warn">Power limit</span>`);
+    if (s.clockDrop) chips.push(`<span class="chip warn">Clock drop</span>`);
+    if (!chips.length) chips.push(`<span class="chip"><span class="check">✓</span>No limits hit</span>`);
+    $("chips").innerHTML = chips.join("");
+
+    // ring
+    const t = s.tctl, lim = s.tctlLimit || 95;
+    const frac = t == null ? 0 : Math.min(1, Math.max(0, (t - 30) / (lim - 30)));
+    $("ringVal").style.strokeDashoffset = 395.8 * (1 - frac);
+    $("ringVal").setAttribute("stroke", t >= lim - 1 ? "url(#gRed)" : t >= lim - 8 ? "url(#gGold)" : "url(#gGreen)");
+    $("ringTemp").innerHTML = (t == null ? "--" : Math.round(t)) + "<small>°C</small>";
+    $("ringLimit").innerHTML = !s.game && cfg && cfg.gameTarget && Math.round(lim) !== cfg.gameTarget
+      ? `limit ${Math.round(lim)}°C<small>${cfg.gameTarget}°C in games</small>`
+      : `limit ${Math.round(lim)}°C`;
+
+    // tiles
+    const ghz = s.clockMhz / 1000, peak = s.peakClockMhz / 1000, max = s.maxClockMhz / 1000;
+    $("clockV").innerHTML = (s.clockMhz ? ghz.toFixed(2) : "--") + "<small>GHz</small>";
+    $("clockBar").className = "bar" + (s.clockDrop ? " red" : "");
+    $("clockBar").firstElementChild.style.width = Math.min(100, ghz / max * 100) + "%";
+    $("clockPeak").style.left = Math.min(100, peak / max * 100) + "%";
+    $("clockSub").textContent = peak ? `peak ${peak.toFixed(2)}` : "peak --";
+
+    const pw = s.powerW, pl = s.powerLimitW;
+    $("powerV").innerHTML = (pw == null ? "--" : Math.round(pw)) + "<small>W</small>";
+    $("powerBar").className = "bar" + (s.powerLimited ? " red" : "");
+    $("powerBar").firstElementChild.style.width = pw == null ? "0" : Math.min(100, pw / Math.min(pl || 100, 100) * 100) + "%";
+    $("powerSub").textContent = s.powerCapW ? `steady cap ${s.powerCapW} W` : pl ? `limit ${Math.round(pl)} W` : "limit --";
+    $("powerState").textContent = s.powerLimited ? "LIMITED" : s.powerCapW ? "CAPPED" : "";
+    const capMark = $("powerCapMark");
+    capMark.style.display = s.powerCapW ? "" : "none";
+    if (s.powerCapW) capMark.style.left = Math.min(100, s.powerCapW / Math.min(pl || 100, 100) * 100) + "%";
+
+    $("loadSub").textContent = `load ${s.cpuLoad}%`;
+
+    const tgt = s.targetFps || 60, fmax = tgt * 2;
+    const bg = s.game && !s.gameForeground;   // tabbed out: the game's own background limiter, not real FPS
+    const fpsShown = bg ? null : s.fps;
+    $("fpsV").innerHTML = (fpsShown == null ? "--" : Math.round(fpsShown)) + "<small>fps</small>";
+    const below = fpsShown != null && fpsShown < tgt * 0.97;
+    $("fpsBar").className = "bar " + (fpsShown == null ? "" : below ? "red" : "green");
+    $("fpsBar").firstElementChild.style.width = fpsShown == null ? "0" : Math.min(100, fpsShown / fmax * 100) + "%";
+    $("fpsTarget").style.left = "50%";
+    $("fpsSub").textContent = bg ? "paused · game in background" : s.fpsLow != null ? `1% low ${Math.round(s.fpsLow)}` : s.game ? "measuring…" : "no game";
+    $("fpsTargetLbl").textContent = `target ${tgt}+`;
+
+    const fan = (id, rpm) => { $(id).textContent = rpm > 0 ? rpm : (rpm === 0 ? "0" : "--"); $(id + "Bar").style.width = Math.min(100, Math.max(0, rpm) / 6500 * 100) + "%"; };
+    fan("fanCpu", s.cpuFanRpm); fan("fanGpu", s.gpuFanRpm);
+    $("boostTag").innerHTML = s.coolingBoost ? `<span class="badge" style="margin-left:6px">BOOST</span>` : "";
+    $("fanMode").textContent = s.coolingBoost ? "max cooling curve" : "firmware curve";
+
+    // side: game mode
+    const phaseTitle = { Off: "Game mode is off", Waiting: "Waiting for a game", GameIdle: "In game", GameUndervolted: "In game, tuned", Unavailable: "Unavailable" }[s.phase] || s.phase;
+    $("gmTitle").textContent = phaseTitle;
+    $("gmSub").textContent = s.phase === "Unavailable" ? s.smuStatus : s.statusText;
+    $("uvBig").textContent = s.undervoltValue;
+    $("uvBig").className = "uv-val" + (s.undervoltActive ? " gold-text" : "");
+    $("uvDesc").textContent = s.undervoltActive
+      ? "Undervolt active: less heat, higher sustained clocks. Removed if the CPU goes idle."
+      : cfg ? `Desktop-safe offset. The game value (${cfg.gameUv}) kicks in once the game loads the CPU.` : "";
+
+    // learning
+    $("learnBox").style.display = s.learningStatus ? "" : "none";
+    $("learnText").textContent = s.learningStatus || "";
+    $("learnLabel").textContent = s.strategy === "Efficient" ? "Strategy" : "Learning";
+    const learned = s.learned || [];
+    $("learnedList").innerHTML = learned.length
+      ? learned.map(l => `<div class="learned-row"><span><b>${esc(l.game)}</b> · ${l.sessions} session${l.sessions === 1 ? "" : "s"}, ${l.minutes} min</span><span>${l.efficientBudgetW ? `efficient at <b class="gold-text">${l.efficientBudgetW} W</b>` : ""}${l.efficientBudgetW && l.bestCapW ? " · " : ""}${l.bestCapW ? `max-perf cap <b>${l.bestCapW} W</b>` + (l.bestClockMhz ? ` (${(l.bestClockMhz / 1000).toFixed(2)} GHz)` : "") : ""}${!l.efficientBudgetW && !l.bestCapW ? "learning…" : ""}</span></div>`).join("")
+      : `<div class="empty">Nothing yet. Play a game from your list.</div>`;
+
+    // advice
+    $("adviceCard").style.display = s.advice.length ? "" : "none";
+    $("advice").innerHTML = s.advice.map(a => `<div class="advice-card">${esc(a.text)}${a.actionLabel ? `<div><button class="btn btn-red btn-sm" data-advice="${a.id}">${esc(a.actionLabel)}</button></div>` : ""}</div>`).join("");
+
+    // timeline
+    $("timeline").innerHTML = s.events.length ? s.events.map(e => `<div class="ev ${e.kind}"><time>${e.time}</time><span class="d"></span><span>${esc(e.text)}</span></div>`).join("") : `<div class="empty">Nothing yet.</div>`;
+
+    $("smuStatus").textContent = "Ryzen SMU: " + s.smuStatus + (s.logError ? " · Log problem: " + s.logError : "");
+    if (s.crashGuardMessage) toast(s.crashGuardMessage);
+
+    // history
+    const lag = lastLagCount != null && s.lagCount > lastLagCount;
+    lastLagCount = s.lagCount;
+    hist.push({ temp: t, clock: s.clockMhz / 1000, thr: s.thermalLimited || s.powerLimited || s.clockDrop, lim, lag, fps: bg ? null : s.fps, tgt: s.targetFps || 60 });
+    if (hist.length > 120) hist.shift();
+    drawChart();
+  }
+
+  // ---------- render: settings ----------
+  function renderConfig() {
+    $("model").textContent = cfg.model;
+    setOn("modeSeg", "mode", cfg.mode);
+    const b = $("battery");
+    b.value = cfg.battery;
+    paintRange(b);
+    $("batteryV").textContent = cfg.batteryNotSet ? "not set" : cfg.battery + "%";
+    $("gpuNote").textContent = cfg.gpuSupported ? "Eco turns the dedicated GPU off to save battery." : "GPU switching isn't supported by this laptop's firmware.";
+    setOn("kbSeg", "kb", cfg.keyboard);
+    setOn("fxSeg", "fx", cfg.lightMode);
+    setOn("speedSeg", "speed", cfg.lightSpeed);
+    $("lightBar").checked = cfg.lightBar;
+    $("gameEnabled").checked = cfg.gameEnabled;
+    $("targetFpsV").textContent = cfg.targetFps + " fps";
+    $("uvV").textContent = cfg.gameUv;
+    $("targetV").textContent = cfg.gameTarget + "°C";
+    $("safeNote").textContent = `At the desktop and when idle: ${cfg.safeUv}`;
+    $("steadyClocks").checked = cfg.steadyClocks;
+    $("fanBoost").checked = !!cfg.fanBoost;
+    const hk = cfg.hotkey || "unavailable";
+    $("hotkeyHint").textContent = hk; $("hotkeyHint2").textContent = hk;
+    $("runAtLogin").checked = cfg.runAtLogin;
+    $("applyOnStart").checked = cfg.applyOnStart;
+    renderSwatches();
+  }
+
+  const palette = ["#bb0000", "#ff2d48", "#ff7a00", "#ffc53d", "#36d399", "#00c2ff", "#3b5bff", "#9b5cff", "#ff4fd8", "#ffffff"];
+  function renderSwatches() {
+    const cur = (cfg.lightColor || "").toLowerCase();
+    $("swatches").innerHTML = palette.map(c => `<span class="swatch${c === cur ? " on" : ""}" data-color="${c}" style="background:${c}"></span>`).join("")
+      + `<input type="color" id="customColor" value="${cur || "#bb0000"}" title="Custom colour">`;
+    $("customColor").addEventListener("change", e => setColor(e.target.value));
+  }
+  function setColor(c) { cfg.lightColor = c; renderSwatches(); send({ cmd: "light", mode: cfg.lightMode, color: c, speed: cfg.lightSpeed }); }
+
+  function setOn(segId, key, val) { document.querySelectorAll(`#${segId} button`).forEach(b => b.classList.toggle("on", String(b.dataset[key]) === String(val))); }
+  function paintRange(r) { r.style.setProperty("--p", ((r.value - r.min) / (r.max - r.min) * 100) + "%"); }
+
+  // ---------- outgoing ----------
+  document.addEventListener("click", e => {
+    const b = e.target.closest("button, .swatch");
+    if (!b) return;
+    if (b.dataset.tab) {
+      document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t === b));
+      document.querySelectorAll(".pane").forEach(p => p.classList.toggle("active", p.id === "pane-" + b.dataset.tab));
+    }
+    if (b.dataset.cmd) send({ cmd: b.dataset.cmd });
+    if (b.dataset.mode) { cfg.mode = +b.dataset.mode; setOn("modeSeg", "mode", cfg.mode); send({ cmd: "mode", value: cfg.mode }); }
+    if (b.dataset.kb) { cfg.keyboard = +b.dataset.kb; setOn("kbSeg", "kb", cfg.keyboard); send({ cmd: "keyboard", value: cfg.keyboard }); }
+    if (b.dataset.fx) { cfg.lightMode = +b.dataset.fx; setOn("fxSeg", "fx", cfg.lightMode); send({ cmd: "light", mode: cfg.lightMode, color: cfg.lightColor, speed: cfg.lightSpeed }); }
+    if (b.dataset.speed) { cfg.lightSpeed = +b.dataset.speed; setOn("speedSeg", "speed", cfg.lightSpeed); send({ cmd: "light", mode: cfg.lightMode, color: cfg.lightColor, speed: cfg.lightSpeed }); }
+    if (b.dataset.color) setColor(b.dataset.color);
+    if (b.dataset.advice) send({ cmd: "advice", id: b.dataset.advice });
+    if (b.dataset.step === "uv") { cfg.gameUv = Math.max(-50, Math.min(0, cfg.gameUv + +b.dataset.d)); $("uvV").textContent = cfg.gameUv; send({ cmd: "gameUv", value: cfg.gameUv }); }
+    if (b.dataset.step === "fps") { cfg.targetFps = Math.max(30, Math.min(240, cfg.targetFps + +b.dataset.d)); $("targetFpsV").textContent = cfg.targetFps + " fps"; send({ cmd: "targetFps", value: cfg.targetFps }); }
+    if (b.dataset.step === "target") { cfg.gameTarget = Math.max(75, Math.min(100, cfg.gameTarget + +b.dataset.d)); $("targetV").textContent = cfg.gameTarget + "°C"; send({ cmd: "gameTarget", value: cfg.gameTarget }); }
+  });
+  $("battery").addEventListener("input", e => { paintRange(e.target); $("batteryV").textContent = e.target.value + "%"; });
+  $("battery").addEventListener("change", e => send({ cmd: "battery", value: +e.target.value }));
+  $("lightBar").addEventListener("change", e => send({ cmd: "lightBar", value: e.target.checked }));
+  $("gameEnabled").addEventListener("change", e => send({ cmd: "gameEnabled", value: e.target.checked }));
+  $("runAtLogin").addEventListener("change", e => send({ cmd: "runAtLogin", value: e.target.checked }));
+  $("steadyClocks").addEventListener("change", e => send({ cmd: "steady", value: e.target.checked }));
+  $("fanBoost").addEventListener("change", e => send({ cmd: "fanBoost", value: e.target.checked }));
+  $("applyOnStart").addEventListener("change", e => send({ cmd: "applyOnStart", value: e.target.checked }));
+
+  // ---------- chart ----------
+  function drawChart() {
+    const c = $("chart"), dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth, h = c.clientHeight;
+    if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+    const g = c.getContext("2d");
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const pad = { l: 34, r: 40, t: 8, b: 18 }, cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
+    const x = i => pad.l + cw * (i + 120 - hist.length) / 119;
+    const yT = v => pad.t + ch * (1 - (v - 40) / 60);       // 40..100 °C
+    const yC = v => pad.t + ch * (1 - v / 5);               // 0..5 GHz
+
+    // grid
+    g.strokeStyle = "rgba(255,255,255,.06)"; g.lineWidth = 1; g.font = "11px Inter, Segoe UI"; g.fillStyle = "rgba(255,255,255,.4)";
+    for (let v = 40; v <= 100; v += 20) { const y = yT(v); g.beginPath(); g.moveTo(pad.l, y); g.lineTo(w - pad.r, y); g.stroke(); g.fillText(v + "°", 4, y + 4); }
+    for (let v = 0; v <= 5; v += 1) { const y = yC(v); g.fillText(v + "G", w - pad.r + 8, y + 4); }
+
+    // throttle bands
+    g.fillStyle = "rgba(212,20,44,.28)";
+    hist.forEach((p, i) => { if (p.thr) g.fillRect(x(i) - cw / 238, pad.t, cw / 119 + 1, ch); });
+
+    // limit line
+    const lim = hist.length ? hist[hist.length - 1].lim : null;
+    if (lim) { g.setLineDash([5, 5]); g.strokeStyle = "rgba(255,45,72,.7)"; g.beginPath(); g.moveTo(pad.l, yT(lim)); g.lineTo(w - pad.r, yT(lim)); g.stroke(); g.setLineDash([]); g.fillStyle = "#ff4d63"; g.fillText("limit", w - pad.r - 30, yT(lim) - 5); }
+
+    const line = (key, y, stroke, fill) => {
+      const pts = hist.map((p, i) => [x(i), p[key] == null ? null : y(p[key])]).filter(p => p[1] != null);
+      if (pts.length < 2) return;
+      g.beginPath(); pts.forEach(([px, py], i) => i ? g.lineTo(px, py) : g.moveTo(px, py));
+      g.strokeStyle = stroke; g.lineWidth = 2.5; g.lineJoin = "round"; g.stroke();
+      if (fill) { g.lineTo(pts[pts.length - 1][0], pad.t + ch); g.lineTo(pts[0][0], pad.t + ch); g.closePath(); const gr = g.createLinearGradient(0, pad.t, 0, pad.t + ch); gr.addColorStop(0, fill); gr.addColorStop(1, "rgba(255,197,61,0)"); g.fillStyle = gr; g.fill(); }
+    };
+    line("temp", yT, "#ffc53d", "rgba(255,197,61,.22)");
+    line("clock", yC, "rgba(255,255,255,.85)");
+
+    // FPS on its own scale (0 .. 2 x target), with the target as a dashed green line at mid height
+    const tgtNow = hist.length ? hist[hist.length - 1].tgt : 60;
+    const yF = v => pad.t + ch * (1 - Math.min(v, tgtNow * 2) / (tgtNow * 2));
+    if (hist.some(p => p.fps != null)) {
+      g.setLineDash([3, 6]); g.strokeStyle = "rgba(54,211,153,.55)"; g.lineWidth = 1.5;
+      g.beginPath(); g.moveTo(pad.l, yF(tgtNow)); g.lineTo(w - pad.r, yF(tgtNow)); g.stroke(); g.setLineDash([]);
+      g.fillStyle = "#36d399"; g.font = "600 11px Inter, Segoe UI"; g.fillText(tgtNow + " fps", pad.l + 4, yF(tgtNow) - 5);
+      line("fps", yF, "#36d399");
+    }
+
+    // lag reports
+    hist.forEach((p, i) => {
+      if (!p.lag) return;
+      const px = x(i);
+      g.strokeStyle = "#7aa2ff"; g.lineWidth = 2.5; g.setLineDash([]);
+      g.beginPath(); g.moveTo(px, pad.t); g.lineTo(px, pad.t + ch); g.stroke();
+      g.fillStyle = "#7aa2ff"; g.font = "700 11px Rubik, Segoe UI"; g.fillText("LAG", px + 4, pad.t + 12);
+    });
+  }
+  window.addEventListener("resize", drawChart);
+
+  // ---------- helpers ----------
+  function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+  let toastTimer, lastToast;
+  function toast(text) {
+    if (text === lastToast) return;
+    lastToast = text;
+    $("toast").textContent = text; $("toast").classList.add("show");
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").classList.remove("show"), 7000);
+  }
+
+  // ---------- host handshake / browser preview ----------
+  if (host) { send({ cmd: "ready" }); return; }
+
+  // Mock data so the page can be previewed in a normal browser.
+  onMessage({ type: "config", model: "ROG Strix G513QY", mode: 1, battery: 60, batteryNotSet: false, gpuSupported: false, keyboard: 1, lightMode: 0, lightColor: "#bb0000", lightSpeed: 1, lightBar: true, gameEnabled: true, games: ["bf6.exe"], gameUv: -40, safeUv: 0, gameTarget: 95, steadyClocks: true, targetFps: 60, hotkey: "Ctrl+Alt+L", runAtLogin: true, applyOnStart: true });
+  let mockLag = 0;
+  document.addEventListener("click", e => { if (e.target.closest("[data-cmd=lag]")) { mockLag++; toast("CPU was at its limit (95°C, 3.31 GHz, load 96%). Responding: fans maxed, steadier power cap."); } });
+  let k = 0;
+  const events = [];
+  const ev = (kind, text) => { const d = new Date(); events.unshift({ time: d.toTimeString().slice(0, 8), kind, text }); };
+  ev("info", "D-Helper started"); ev("action", "bf6.exe detected: Turbo on, CPU limit 93°C"); ev("good", "Undervolt -40 applied (CPU under load)");
+  setInterval(() => {
+    k++;
+    const throttling = (k % 60) > 38 && (k % 60) < 50;
+    const temp = throttling ? 92.5 + Math.random() : 80 + Math.sin(k / 6) * 5 + Math.random() * 2;
+    const clock = throttling ? 3550 + Math.random() * 200 : 4300 + Math.random() * 250;
+    if (k % 60 === 39) ev("warn", "CPU reached its 93°C limit and is slowing itself down");
+    if (k % 60 === 40) ev("action", "Fans boosted (throttling detected)");
+    if (k % 60 === 50) ev("good", "Back to full speed");
+    onMessage({ type: "state", phase: "GameUndervolted", statusText: "bf6.exe · undervolt -40 on", game: "bf6.exe",
+      health: throttling ? (k % 60 > 46 ? "Throttling" : "Watch") : "Optimal",
+      healthTitle: throttling ? (k % 60 > 46 ? "Throttling" : "Fixing it") : "Full speed",
+      healthDetail: throttling ? "CPU reached its 93°C limit and is slowing itself down. Undervolt -40 and max fans are already on." : `CPU at ${(clock / 1000).toFixed(2)} GHz, no limits hit. Undervolt -40 is keeping temperatures down.`,
+      cpuLoad: 55 + Math.round(Math.random() * 20), tctl: temp, tctlLimit: 93, powerW: 58 + Math.random() * 8, powerLimitW: 155,
+      clockMhz: Math.round(clock), peakClockMhz: 4610, maxClockMhz: 4800, cpuFanRpm: throttling ? 6100 : 4700, gpuFanRpm: throttling ? 6200 : 4900,
+      thermalLimited: throttling, powerLimited: false, clockDrop: throttling, undervoltActive: true, undervoltValue: -40, coolingBoost: throttling || k % 60 > 50,
+      smuReady: true, smuStatus: "ready (Cezanne, PM table 0x400005)", events: events.slice(0, 40),
+      powerCapW: (k % 60) > 50 || (k % 60) < 10 ? 98 : null, lagCount: mockLag + Math.floor(k / 60) + ((k % 60) > 44 ? 1 : 0),
+      learningStatus: "Efficient · Balanced · 62 W budget · target 60+ fps",
+      learned: [{ game: "Wow.exe", efficientBudgetW: 48, bestCapW: null, sessions: 5, testedCaps: 0, minutes: 210 }, { game: "bf6.exe", efficientBudgetW: null, bestCapW: 98, bestClockMhz: 3415, sessions: 3, testedCaps: 4, minutes: 42 }],
+      fps: 74 + Math.sin(k / 5) * 6 + Math.random() * 3, fpsLow: 63 + Math.random() * 3, targetFps: 60, strategy: "Efficient", budgetW: 62, savingW: 93, modeName: "Balanced",
+      advice: k % 60 > 46 && throttling ? [{ id: "airflow", text: "Lift the back of the laptop or use a cooling pad: the fans are already at maximum.", actionLabel: null }, { id: "fps-cap", text: "Cap the game's frame rate a little below your average FPS. Steady frames beat spikes and throttle dips.", actionLabel: null }] : [],
+      crashGuardMessage: null });
+  }, 250);
+})();
+</script>
+</body>
+</html>
