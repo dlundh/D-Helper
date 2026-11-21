@@ -112,12 +112,14 @@ public sealed class CapLearner
         _game = game;
         _maxCapW = maxCapW;
         _minCapW = minCapW;
-        if (!_store.Games.TryGetValue(game, out _profile))
+        bool isNew;
+        lock (_store)
         {
-            _profile = new GameProfile();
-            _store.Games[game] = _profile;
+            isNew = !_store.Games.TryGetValue(game, out _profile);
+            if (isNew) { _profile = new GameProfile(); _store.Games[game] = _profile; }
         }
-        _profile.Sessions++;
+        _profile!.Sessions++;
+        if (isNew) Save(); // remember the game right away, so it is recognised instantly from now on
         _center = _profile.BestCapW is int best ? Math.Clamp(best, minCapW, maxCapW) : null;
         _stage = Stage.Settling;
         _stageSeconds = 0;
@@ -148,6 +150,12 @@ public sealed class CapLearner
         _stage = Stage.Settling;
         _stageSeconds = 0;
         _current = null;
+    }
+
+    /// <summary>Every game D-Helper has managed before (exe names). These are recognised the moment they start.</summary>
+    public IReadOnlyList<string> KnownGames
+    {
+        get { lock (_store) return _store.Games.Keys.ToList(); }
     }
 
     /// <summary>The budget this game settled at in earlier sessions (efficient mode), if known.</summary>

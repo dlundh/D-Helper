@@ -642,8 +642,11 @@ public sealed class GameController : IDisposable
             return null;
         }
 
-        foreach (var name in _config.GameExecutables)
+        // Games from the optional list, and every game D-Helper has managed before (remembered in learning.json),
+        // are recognised as soon as their process runs - no need to be in front first.
+        foreach (var name in _config.GameExecutables.Concat(_learner.KnownGames).Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            if (NotGames.Contains(Path.GetFileNameWithoutExtension(name.Trim()))) continue;
             string bare = Path.GetFileNameWithoutExtension(name.Trim());
             if (bare.Length == 0) continue;
             var procs = Process.GetProcessesByName(bare);
