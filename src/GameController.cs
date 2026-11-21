@@ -35,6 +35,7 @@ public sealed class GameController : IDisposable
         bool UndervoltActive, int UndervoltValue, bool CoolingBoost, bool SmuReady, string SmuStatus,
         int? PowerCapW, int LagCount, string LearningStatus,
         double? Fps, double? FpsLow, int TargetFps, string Strategy, int? BudgetW, int? SavingW, string? ModeName, bool GameForeground,
+        double? LastGameFps, double? LastGameFpsLow, int? LastGameFpsAgeSec,
         IReadOnlyList<Event> Events, IReadOnlyList<Advice> Advice, string? CrashGuardMessage);
 
     /// <summary>Efficient = hold the FPS target with the least power. Performance = the game needs everything.</summary>
@@ -80,6 +81,8 @@ public sealed class GameController : IDisposable
     private int _gamePid, _candidatePid, _candidateSeconds;
     private double? _fpsAvg, _fpsLow;
     private bool _gameForeground = true;   // games throttle FPS when tabbed out: those seconds don't count
+    private double? _lastFgFps, _lastFgLow; // last real (in-game) reading, shown while you look at the dashboard
+    private DateTime _lastFgTime;
 
     // Efficiency controller: one power budget (W) that also picks the performance mode
     private Strategy _strategy = Strategy.None;
@@ -151,6 +154,7 @@ public sealed class GameController : IDisposable
                 _strategy == Strategy.Efficient && _origSlowW > 0 && t != null ? Math.Max(0, (int)(_origSlowW - t.SlowValue)) : null,
                 _currentMode switch { AsusAcpi.ModeSilent => "Silent", AsusAcpi.ModeBalanced => "Balanced", AsusAcpi.ModeTurbo => "Turbo", _ => null },
                 _gameForeground,
+                _lastFgFps, _lastFgLow, _lastFgFps != null ? (int)(DateTime.Now - _lastFgTime).TotalSeconds : null,
                 _events.ToList(), _advice.ToList(), CrashGuardMessage);
         }
     }
@@ -317,6 +321,7 @@ public sealed class GameController : IDisposable
         _strategy = Strategy.None;
         _gamePid = 0;
         _fpsAvg = _fpsLow = null;
+        _lastFgFps = _lastFgLow = null;
         _smu.SetTctlLimit(_originalTctlLimit);
         // Re-selecting the mode also restores the firmware's default fan curves.
         _acpi.SetPerformanceMode(_modeBeforeGame >= 0 ? _modeBeforeGame : _config.PerformanceMode);
@@ -499,6 +504,7 @@ public sealed class GameController : IDisposable
         var s = _gamePid > 0 ? _fps.Get(_gamePid) : null;
         _fpsAvg = s?.Fps;
         _fpsLow = s?.Low;
+        if (_gameForeground && s != null) { _lastFgFps = s.Value.Fps; _lastFgLow = s.Value.Low; _lastFgTime = DateTime.Now; }
     }
 
     private void UpdateEfficiency()

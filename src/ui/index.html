@@ -496,14 +496,22 @@
 
     const tgt = s.targetFps || 60, fmax = tgt * 2;
     const bg = s.game && !s.gameForeground;   // tabbed out: the game's own background limiter, not real FPS
-    const fpsShown = bg ? null : s.fps;
+    // While you look at the dashboard the game is in the background: show its last real (in-game) reading, dimmed.
+    const fpsShown = bg ? s.lastGameFps : s.fps;
+    const lowShown = bg ? s.lastGameFpsLow : s.fpsLow;
     $("fpsV").innerHTML = (fpsShown == null ? "--" : Math.round(fpsShown)) + "<small>fps</small>";
+    $("fpsV").style.opacity = bg ? ".55" : "";
     const below = fpsShown != null && fpsShown < tgt * 0.97;
     $("fpsBar").className = "bar " + (fpsShown == null ? "" : below ? "red" : "green");
+    $("fpsBar").style.opacity = bg ? ".45" : "";
     $("fpsBar").firstElementChild.style.width = fpsShown == null ? "0" : Math.min(100, fpsShown / fmax * 100) + "%";
     $("fpsTarget").style.left = "50%";
-    $("fpsSub").textContent = bg ? "paused · game in background" : s.fpsLow != null ? `1% low ${Math.round(s.fpsLow)}` : s.game ? "measuring…" : "no game";
-    $("fpsTargetLbl").textContent = `target ${tgt}+`;
+    const age = s.lastGameFpsAgeSec;
+    const ago = age == null ? "" : age < 60 ? `${age} s ago` : `${Math.round(age / 60)} min ago`;
+    $("fpsSub").textContent = bg
+      ? (s.lastGameFps != null ? `last in-game · ${ago}` : "game in background")
+      : lowShown != null ? `1% low ${Math.round(lowShown)}` : s.game ? "measuring…" : "no game";
+    $("fpsTargetLbl").textContent = bg && lowShown != null ? `1% low ${Math.round(lowShown)}` : `target ${tgt}+`;
 
     const fan = (id, rpm) => { $(id).textContent = rpm > 0 ? rpm : (rpm === 0 ? "0" : "--"); $(id + "Bar").style.width = Math.min(100, Math.max(0, rpm) / 6500 * 100) + "%"; };
     fan("fanCpu", s.cpuFanRpm); fan("fanGpu", s.gpuFanRpm);

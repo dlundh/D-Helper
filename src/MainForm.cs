@@ -150,6 +150,7 @@ public sealed class MainForm : Form
             s.UndervoltActive, s.UndervoltValue, s.CoolingBoost, s.SmuReady, s.SmuStatus,
             s.PowerCapW, s.LagCount, s.LearningStatus,
             s.Fps, s.FpsLow, s.TargetFps, s.Strategy, s.BudgetW, s.SavingW, s.ModeName, s.GameForeground,
+            s.LastGameFps, s.LastGameFpsLow, s.LastGameFpsAgeSec,
             learned = _game.Learner.Summary(),
             events =s.Events.Select(e => new { time = e.Time.ToString("HH:mm:ss"), e.Kind, e.Text }),
             advice = s.Advice,
