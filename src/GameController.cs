@@ -31,6 +31,8 @@ public sealed class GameController : IDisposable
     private bool _coolingBoost;
     private int _modeBeforeGame = -1;
     private int _originalTctlLimit = 93;
+    private int _appliedTctl = -1;   // limit currently in the SMU during a game
+    private int _appliedUv;          // offset currently in the SMU while undervolted
     private DateTime _uvAppliedAt;
     private long _prevIdle, _prevTotal;
     private StreamWriter? _csv;
@@ -117,6 +119,7 @@ public sealed class GameController : IDisposable
 
             if (_phase is not (Phase.GameIdle or Phase.GameUndervolted)) EnterGame(game);
 
+            ApplyLiveChanges();
             UpdateUndervoltGate();
             UpdateCooling();
             WriteCsv();
@@ -143,6 +146,7 @@ public sealed class GameController : IDisposable
         if (LastTelemetry != null) _originalTctlLimit = (int)Math.Round(LastTelemetry.TctlLimit);
         _acpi.SetPerformanceMode(AsusAcpi.ModeTurbo);
         _smu.SetTctlLimit(_config.GameTempTarget);
+        _appliedTctl = _config.GameTempTarget;
         _highLoadSeconds = _lowLoadSeconds = _hotSeconds = _coolSeconds = 0;
         _coolingBoost = false;
         OpenCsv(game);
@@ -175,6 +179,7 @@ public sealed class GameController : IDisposable
             if (_smu.SetCurveOptimizerAll(_config.GameUndervolt) == 1)
             {
                 _uvAppliedAt = DateTime.Now;
+                _appliedUv = _config.GameUndervolt;
                 _phase = Phase.GameUndervolted;
             }
             else File.Delete(MarkerPath);
@@ -194,6 +199,38 @@ public sealed class GameController : IDisposable
                 CrashGuardMessage = $"CPU hardware errors were logged under the undervolt. Game undervolt reduced to {_config.GameUndervolt}.";
                 Log.Write("CRASH GUARD: WHEA errors -> " + CrashGuardMessage);
                 _phase = Phase.GameIdle;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Pushes values changed in the UI while a game runs. A new undervolt is only sent while the
+    /// undervolt is already on, i.e. while the CPU is under sustained load, so a deeper value never
+    /// reaches the CPU at idle; setting it to 0 removes it at once.
+    /// </summary>
+    private void ApplyLiveChanges()
+    {
+        int target = _config.GameTempTarget;
+        if (target != _appliedTctl && _smu.SetTctlLimit(target) == 1)
+        {
+            _appliedTctl = target;
+            Log.Write($"Live change: CPU limit now {target}°C");
+        }
+
+        int uv = _config.GameUndervolt;
+        if (_phase == Phase.GameUndervolted && uv != _appliedUv)
+        {
+            if (uv >= 0)
+            {
+                RemoveUndervolt();
+                _phase = Phase.GameIdle;
+                Log.Write("Live change: game undervolt set to 0, removed");
+            }
+            else if (_smu.SetCurveOptimizerAll(uv) == 1)
+            {
+                File.WriteAllText(MarkerPath, $"{uv} {DateTime.Now:o}");
+                _appliedUv = uv;
+                Log.Write($"Live change: undervolt now {uv}");
             }
         }
     }
