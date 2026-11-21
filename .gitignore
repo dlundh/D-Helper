@@ -1,0 +1,9 @@
+# build output
+bin/
+obj/
+app/
+*.user
+.vs/
+
+# local REA evidence bundle (large, contains local paths)
+docs/rea-evidence-*.json
