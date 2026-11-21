@@ -119,6 +119,7 @@ ASUS HID devices present: `VID_0B05&PID_1866` (COL01, 04, 05, 06, 07).
 
 | BF6 session 1 (old build) | CPU at its limit 99 % of 215 s; undervolt on 98 %, fan boost 99 %; firmware reset the Tctl limit 95 → 93 °C at 07:43:05 and it stayed there |
 | BF6 session 2 (re-assert build) | limit held at 95 °C for 599 of 600 s (the firmware's reset at game start was undone within 1 s); in menus load 90–98 %, Tctl 95 °C, effective clock ≈ 3.25 GHz: cooling-bound |
+| **WoW, 2026-11-21 10:01 — crash** | detected at 10:01:42; CPU at 95 °C within 2 s (full Turbo budget) counted as throttling → CO −40 applied instantly at 36–42 % load; load 26–58 % bursty; Windows crashed ~7 s later (Kernel-Power 41). Fix: deep undervolt only in Performance strategy, foreground, ≥ 60 % load for 10 consecutive s; off below 40 % |
 | BF6 with steady-clocks cap in max performance | cap 92–105 W for 226 s (71 s while ≥ 5 °C under the limit): 52.7 fps avg, 1 % low 25.4, fans ~6300 rpm |
 | BF6 uncapped, fan boost off | 58.0 fps avg, 1 % low 31.3, fans ~5100 rpm: faster and quieter, so caps are now skipped when FPS is measurable |
 | Power limits via SMU (during BF6) | Turbo limits read 216/180/216 W, draw 132.9 W at Tctl 94.9 °C. `SetPowerLimits(80, 80, 88)` → read back 80/80/88 W, draw 79.9 W, Tctl 84.7 °C after 1 s; originals restored cleanly. Units confirmed as watts (×1000 = mW in the mailbox). |

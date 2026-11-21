@@ -54,10 +54,11 @@ The mechanisms underneath:
 
 1. Sets the CPU temperature limit (default 93 °C) and picks the mode from the power budget. ASUS firmware sometimes
    resets limits mid-game; D-Helper checks them every second and puts them back within 3 s.
-2. Applies the **game undervolt** (Curve Optimizer all-core, default −40) after 3 s at ≥ 25 % CPU load,
-   or **immediately when throttling is detected**. It stays on through normal play and is only removed when the CPU is
-   truly idle (< 12 % for 5 s, e.g. alt-tabbed) or the game closes, because a deep offset that is stable under load can
-   crash at idle. At the desktop the safe offset (0) is always in effect.
+2. Applies the **game undervolt** (Curve Optimizer all-core, default −40) **only in max-performance (CPU-bound) games,
+   in the foreground, after 10 consecutive seconds at ≥ 60 % CPU load**, and removes it the moment load drops under
+   40 %, the game goes to the background, switches to Efficient, or closes. A deep offset is only stable while every core
+   stays busy: an earlier, looser rule (25 % load, or instantly on throttling) applied −40 in WoW at 26–58 % bursty load
+   and crashed Windows within seconds. Light games and the desktop always use the safe offset (0).
 3. **Fans first:** an aggressive fan curve kicks in 3 °C below the limit, or at once when throttling is detected.
 4. **Throttle detection** every second: thermal limit, power limit, or the effective clock falling below 85 % of its
    recent peak under load. If it persists 15 s with undervolt and fan boost already on, D-Helper suggests next steps.

@@ -106,7 +106,11 @@ public sealed class GameController : IDisposable
     private static string MarkerPath => Path.Combine(AppConfig.Folder, "uv_active.marker");
 
     // Load gate. Entering is quick; leaving needs real idle, so the undervolt stays on through normal play.
-    private const int EnterLoadPct = 25, EnterSeconds = 3, ExitLoadPct = 12, ExitSeconds = 5;
+    // Undervolt gate. A deep Curve Optimizer offset is only stable while every core stays busy: on 2026-11-21
+    // -40 crashed Windows ~7 s after being applied in WoW at 26-58 % bursty load (cores dropping into low-power
+    // states). So it is only applied in max-performance (CPU-bound) games after 10 s at >= 60 % load, and removed
+    // the moment load falls under 40 %. Efficient (light) games never get it.
+    private const int EnterLoadPct = 60, EnterSeconds = 10, ExitLoadPct = 40, ExitSeconds = 1;
     private const int GamingLoadPct = 25;
 
     // Aggressive cooling curve (temps °C then duty %), used when the CPU nears the target.
@@ -343,10 +347,19 @@ public sealed class GameController : IDisposable
 
     private void UpdateUndervoltGate()
     {
-        if (LastCpuLoad >= EnterLoadPct) { _highLoadSeconds++; _lowLoadSeconds = 0; }
-        else if (LastCpuLoad < ExitLoadPct) { _lowLoadSeconds++; _highLoadSeconds = 0; }
+        // Entering needs 10 CONSECUTIVE seconds at >= 60 %; any dip below 60 % restarts the count.
+        _highLoadSeconds = LastCpuLoad >= EnterLoadPct ? _highLoadSeconds + 1 : 0;
+        _lowLoadSeconds = LastCpuLoad < ExitLoadPct ? _lowLoadSeconds + 1 : 0;
 
-        if (_phase == Phase.GameIdle && _highLoadSeconds >= EnterSeconds)
+        if (_phase == Phase.GameUndervolted && (_strategy != Strategy.Performance || !_gameForeground))
+        {
+            // Back to a light game, or tabbed out: the deep offset comes off at once.
+            RemoveUndervolt();
+            _phase = Phase.GameIdle;
+            AddEvent("info", "Undervolt paused: only used while a CPU-bound game keeps every core busy");
+            return;
+        }
+        if (_phase == Phase.GameIdle && _highLoadSeconds >= EnterSeconds && _strategy == Strategy.Performance && _gameForeground)
         {
             ApplyGameUndervolt("CPU under load");
         }
@@ -874,7 +887,7 @@ public sealed class GameController : IDisposable
         if (gaming && throttling)
         {
             // Automatic mitigation, in order of effectiveness.
-            if (_phase == Phase.GameIdle) ApplyGameUndervolt("throttling detected");
+            // (No instant undervolt here any more: that applied -40 at light, bursty load and crashed Windows.)
             if (thermal || _clockDrop) BoostFans("throttling detected");
         }
 
