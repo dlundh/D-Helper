@@ -35,6 +35,7 @@ public sealed class CapLearner
     {
         public int? BestCapW { get; set; }
         public int? EfficientBudgetW { get; set; }   // least power that held the FPS target last time
+        public int? CeilingW { get; set; }           // above this the firmware hard-throttled the CPU (0.4 GHz)
         public int Sessions { get; set; }
         public DateTime Updated { get; set; }
         public Dictionary<int, CapStat> Stats { get; set; } = new();
@@ -168,6 +169,20 @@ public sealed class CapLearner
         if (_profile == null) return;
         _profile.EfficientBudgetW = _profile.EfficientBudgetW is int old ? (int)Math.Round(old * 0.7 + budgetW * 0.3) : budgetW;
         _profile.Updated = DateTime.Now;
+        Save();
+    }
+
+    /// <summary>Power ceiling learned from a firmware emergency throttle in this game, if any.</summary>
+    public int? Ceiling(string game) =>
+        _store.Games.TryGetValue(game, out var p) ? p.CeilingW : null;
+
+    public void RecordCeiling(int watts)
+    {
+        if (_profile == null) return;
+        _profile.CeilingW = watts;
+        _profile.Updated = DateTime.Now;
+        if (_maxCapW > watts) _maxCapW = watts;
+        if (_center is int c && c > watts) _center = watts;
         Save();
     }
 
@@ -321,6 +336,7 @@ public sealed class CapLearner
                 game = g.Key,
                 bestCapW = g.Value.BestCapW,
                 efficientBudgetW = g.Value.EfficientBudgetW,
+                ceilingW = g.Value.CeilingW,
                 bestClockMhz = best == null ? (int?)null : (int)(best.ClockSum / best.Seconds),
                 sessions = g.Value.Sessions,
                 testedCaps = g.Value.Stats.Count,

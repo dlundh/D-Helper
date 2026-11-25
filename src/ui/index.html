@@ -89,6 +89,7 @@
   /* hero */
   .hero { display: grid; grid-template-columns: minmax(0,1fr) 230px; gap: 18px; align-items: center; padding: 26px 28px; overflow: hidden; }
   .hero h1 { font-family: var(--head); font-weight: 800; font-size: 54px; line-height: 1; letter-spacing: -2px; margin: 0 0 12px; }
+  .warn-text { color: var(--red-hi); }
   .gold-text { background: linear-gradient(var(--gold-1) 10%, var(--gold-2) 45%, var(--gold-3) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .red-text { background: linear-gradient(#ff8a98 0%, var(--red-hi) 50%, var(--red) 100%); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .blue-text { background: linear-gradient(#c9d8ff, #7aa2ff); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -297,10 +298,12 @@
         <div class="pane active" id="pane-perf">
           <div class="ctl">
             <h3>Performance mode</h3>
-            <p>Game mode switches to Turbo by itself while a game runs.</p>
+            <p>Game mode picks the mode by itself while a game runs.</p>
             <div class="seg" id="modeSeg">
               <button data-mode="2">Silent</button><button data-mode="0">Balanced</button><button data-mode="1">Turbo</button>
             </div>
+            <label class="toggle" style="margin-top:14px"><input type="checkbox" id="desktopSaver"><span class="sw"></span>Desktop saver: Silent when no game is running</label>
+            <div class="note">Lowest power, heat and fan noise in Windows. Steps up to Balanced only during sustained heavy work (70%+ CPU for 20 s), back to Silent after a minute of calm. Picking a mode above overrides it until your next game ends.</div>
           </div>
           <div class="ctl">
             <h3>Battery charge limit</h3>
@@ -454,6 +457,9 @@
     if (s.game) chips.push(`<span class="chip on"><span class="check">✓</span>${esc(s.game)} running</span>`);
     if (s.game && s.strategy === "Efficient") chips.push(`<span class="chip gold">Efficient · ${esc(s.modeName || "")} · ${s.budgetW} W</span>`);
     if (s.game && s.strategy === "Performance") chips.push(`<span class="chip warn">Max performance</span>`);
+    if (!s.game && s.modeName) chips.push(`<span class="chip on">Desktop saver · ${esc(s.modeName)}</span>`);
+    const liveMode = { Silent: 2, Balanced: 0, Turbo: 1 }[s.modeName];
+    setOn("modeSeg", "mode", liveMode ?? cfg.mode); // show what the laptop is actually in
     if (s.savingW >= 5) chips.push(`<span class="chip on">Saving ${s.savingW} W</span>`);
     if (s.undervoltActive) chips.push(`<span class="chip gold">Undervolt ${s.undervoltValue} active</span>`);
     if (s.coolingBoost) chips.push(`<span class="chip on"><span class="spin">✦</span>Fan boost</span>`);
@@ -534,7 +540,7 @@
     $("learnLabel").textContent = s.strategy === "Efficient" ? "Strategy" : "Learning";
     const learned = s.learned || [];
     $("learnedList").innerHTML = learned.length
-      ? learned.map(l => `<div class="learned-row"><span><b>${esc(l.game)}</b> · ${l.sessions} session${l.sessions === 1 ? "" : "s"}, ${l.minutes} min</span><span>${l.efficientBudgetW ? `efficient at <b class="gold-text">${l.efficientBudgetW} W</b>` : ""}${l.efficientBudgetW && l.bestCapW ? " · " : ""}${l.bestCapW ? `max-perf cap <b>${l.bestCapW} W</b>` + (l.bestClockMhz ? ` (${(l.bestClockMhz / 1000).toFixed(2)} GHz)` : "") : ""}${!l.efficientBudgetW && !l.bestCapW ? "learning…" : ""}</span></div>`).join("")
+      ? learned.map(l => `<div class="learned-row"><span><b>${esc(l.game)}</b> · ${l.sessions} session${l.sessions === 1 ? "" : "s"}, ${l.minutes} min</span><span>${l.efficientBudgetW ? `efficient at <b class="gold-text">${l.efficientBudgetW} W</b>` : ""}${l.efficientBudgetW && l.bestCapW ? " · " : ""}${l.bestCapW ? `max-perf cap <b>${l.bestCapW} W</b>` + (l.bestClockMhz ? ` (${(l.bestClockMhz / 1000).toFixed(2)} GHz)` : "") : ""}${!l.efficientBudgetW && !l.bestCapW ? "learning…" : ""}${l.ceilingW ? ` · <span class="warn-text" title="Above this the firmware hard-throttled the CPU">ceiling <b>${l.ceilingW} W</b></span>` : ""}</span></div>`).join("")
       : `<div class="empty">Nothing yet. Play a game from your list.</div>`;
 
     // advice
@@ -575,6 +581,7 @@
     $("safeNote").textContent = `At the desktop and when idle: ${cfg.safeUv}`;
     $("steadyClocks").checked = cfg.steadyClocks;
     $("fanBoost").checked = !!cfg.fanBoost;
+    $("desktopSaver").checked = cfg.desktopSaver !== false;
     const hk = cfg.hotkey || "unavailable";
     $("hotkeyHint").textContent = hk; $("hotkeyHint2").textContent = hk;
     $("runAtLogin").checked = cfg.runAtLogin;
@@ -620,6 +627,7 @@
   $("runAtLogin").addEventListener("change", e => send({ cmd: "runAtLogin", value: e.target.checked }));
   $("steadyClocks").addEventListener("change", e => send({ cmd: "steady", value: e.target.checked }));
   $("fanBoost").addEventListener("change", e => send({ cmd: "fanBoost", value: e.target.checked }));
+  $("desktopSaver").addEventListener("change", e => send({ cmd: "desktopSaver", value: e.target.checked }));
   $("applyOnStart").addEventListener("change", e => send({ cmd: "applyOnStart", value: e.target.checked }));
 
   // ---------- chart ----------

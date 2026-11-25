@@ -152,7 +152,7 @@ public sealed class GameController : IDisposable
                 _fpsAvg, _fpsLow, _config.TargetFps, _strategy.ToString(),
                 _strategy == Strategy.Efficient ? _budgetW : _capW,
                 _strategy == Strategy.Efficient && _origSlowW > 0 && t != null ? Math.Max(0, (int)(_origSlowW - t.SlowValue)) : null,
-                _currentMode switch { AsusAcpi.ModeSilent => "Silent", AsusAcpi.ModeBalanced => "Balanced", AsusAcpi.ModeTurbo => "Turbo", _ => null },
+                ActiveGame != null ? (_currentMode >= 0 ? ModeName(_currentMode) : null) : (_desktopMode >= 0 ? ModeName(_desktopMode) : null),
                 _gameForeground,
                 _lastFgFps, _lastFgLow, _lastFgFps != null ? (int)(DateTime.Now - _lastFgTime).TotalSeconds : null,
                 _events.ToList(), _advice.ToList(), CrashGuardMessage);
@@ -227,6 +227,9 @@ public sealed class GameController : IDisposable
             _fps.EnsureRunning();
             LastTelemetry = _smu.IsReady ? _smu.ReadTelemetry() : null;
 
+            if (ActiveGame == null) UpdateDesktopSaver();
+            else _desktopMode = -1; // the game owns the mode; re-evaluate after it closes
+
             if (!_smu.IsReady)
             {
                 SetPhase(Phase.Unavailable, "Game mode needs administrator rights (" + _smu.Status + ")");
@@ -249,10 +252,14 @@ public sealed class GameController : IDisposable
                     if (_phase is not (Phase.GameIdle or Phase.GameUndervolted)) EnterGame(game);
                     SampleFps();
                     ApplyLiveChanges();
+                    UpdateHardThrottleGuard();
                     UpdateUndervoltGate();
                     UpdateCooling();
-                    if (_strategy == Strategy.Efficient) UpdateEfficiency();
+                    // During a firmware hard throttle every reading is meaningless (0.4 GHz, single-digit FPS): hold.
+                    if (Collapsed) { }
+                    else if (_strategy == Strategy.Efficient) UpdateEfficiency();
                     else { UpdatePowerCap(); CheckEfficiencyReturn(); }
+                    ReassertCeiling();
                     WriteCsv();
                     string fps = _fpsAvg is double f ? $"{f:F0} fps · " : "";
                     string uv = _phase == Phase.GameUndervolted ? $"undervolt {_appliedUv} on" : "undervolt waiting for load";
@@ -274,6 +281,49 @@ public sealed class GameController : IDisposable
         Changed?.Invoke();
     }
 
+    // ---------- desktop saver ----------
+    // No game: Silent (lowest power limits and fan curve). Sustained heavy work (>= 70 % for 20 s) steps up to
+    // Balanced so it isn't sluggish; 60 s under 25 % goes back to Silent. Only transitions write the mode, so a
+    // manual pick (dashboard or Fn+F5) stands until the next transition.
+    private int _desktopMode = -1, _desktopBusySeconds, _desktopQuietSeconds;
+    private bool _saverPaused;
+    private const int DesktopBusyPct = 70, DesktopBusySec = 20, DesktopQuietPct = 25, DesktopQuietSec = 60;
+
+    /// <summary>The user picked a mode by hand: keep it until the next game ends.</summary>
+    public void UserPickedMode() { lock (_tickLock) { _saverPaused = true; _desktopMode = -1; } }
+
+    public void DesktopSaverChanged()
+    {
+        lock (_tickLock)
+        {
+            _saverPaused = false;
+            _desktopMode = -1;
+            if (!_config.DesktopSaver && ActiveGame == null) _acpi.SetPerformanceMode(_config.PerformanceMode);
+        }
+    }
+
+    private void UpdateDesktopSaver()
+    {
+        if (!_config.DesktopSaver || _saverPaused) { _desktopMode = -1; return; }
+        _desktopBusySeconds = LastCpuLoad >= DesktopBusyPct ? _desktopBusySeconds + 1 : 0;
+        _desktopQuietSeconds = LastCpuLoad < DesktopQuietPct ? _desktopQuietSeconds + 1 : 0;
+
+        int want = _desktopMode;
+        if (_desktopMode == -1) want = AsusAcpi.ModeSilent;
+        else if (_desktopMode == AsusAcpi.ModeSilent && _desktopBusySeconds >= DesktopBusySec) want = AsusAcpi.ModeBalanced;
+        else if (_desktopMode == AsusAcpi.ModeBalanced && _desktopQuietSeconds >= DesktopQuietSec) want = AsusAcpi.ModeSilent;
+        if (want == _desktopMode) return;
+
+        _acpi.SetPerformanceMode(want);
+        string why = _desktopMode == -1 ? "no game running" : want == AsusAcpi.ModeBalanced ? "sustained heavy work" : "work finished";
+        if (_desktopMode != -1 || _lastDesktopEventMode != want) AddEvent("info", $"Desktop saver: {ModeName(want)} ({why})");
+        Log.Write($"Desktop saver -> {ModeName(want)} ({why}, load {LastCpuLoad}%)");
+        _lastDesktopEventMode = want;
+        _desktopMode = want;
+        _desktopBusySeconds = _desktopQuietSeconds = 0;
+    }
+    private int _lastDesktopEventMode = -1;
+
     private void EnterGame(string game)
     {
         ActiveGame = game;
@@ -288,7 +338,11 @@ public sealed class GameController : IDisposable
         _capW = null;
         _wallSeconds = _headroomSeconds = _loadedSeconds = 0;
         if (_origSlowW <= 0) _origStapmW = _origSlowW = _origFastW = 150;
-        int? perfStart = _learner.BeginSession(game, _origSlowW - 1, _config.MinPowerCapW); // top probe ≈ uncapped
+        _ceilingW = _learner.Ceiling(game);
+        _collapseSeconds = 0;
+        _recentPowerW.Clear();
+        int? perfStart = _learner.BeginSession(game, Math.Min(_origSlowW - 1, _ceilingW ?? int.MaxValue), _config.MinPowerCapW); // top probe ≈ uncapped
+        if (_ceilingW is int cw && cw < _origSlowW) _smu.SetPowerLimits(cw, cw, (int)(cw * 1.1));
         _learnedStartCap = _config.SteadyClocks ? perfStart : null;
         _smu.SetTctlLimit(_config.GameTempTarget);
         _appliedTctl = _config.GameTempTarget;
@@ -315,7 +369,10 @@ public sealed class GameController : IDisposable
     private void LeaveGame(string reason)
     {
         RemoveUndervolt();
+        bool hadCeiling = _ceilingW != null;
+        _ceilingW = null; // so the original limits come back
         RemovePowerCap(null);
+        if (hadCeiling && _origSlowW > 0) _smu.SetPowerLimits(_origStapmW, _origSlowW, _origFastW);
         if (_strategy == Strategy.Efficient && _stableBudgetSeconds >= 30) _learner.RecordEfficient(_budgetW);
         _learner.EndSession();
         _strategy = Strategy.None;
@@ -324,7 +381,10 @@ public sealed class GameController : IDisposable
         _lastFgFps = _lastFgLow = null;
         _smu.SetTctlLimit(_originalTctlLimit);
         // Re-selecting the mode also restores the firmware's default fan curves.
-        _acpi.SetPerformanceMode(_modeBeforeGame >= 0 ? _modeBeforeGame : _config.PerformanceMode);
+        // With the desktop saver on, go straight to Silent (the saver takes over on the next tick).
+        _saverPaused = false;
+        if (_config.DesktopSaver) { _acpi.SetPerformanceMode(AsusAcpi.ModeSilent); _desktopMode = AsusAcpi.ModeSilent; _lastDesktopEventMode = -1; }
+        else _acpi.SetPerformanceMode(_modeBeforeGame >= 0 ? _modeBeforeGame : _config.PerformanceMode);
         _coolingBoost = false;
         _csv?.Dispose();
         _csv = null;
@@ -466,7 +526,62 @@ public sealed class GameController : IDisposable
 
     // ---------- Efficiency: hold the FPS target with the least power ----------
 
-    private int MaxBudgetW => Math.Max(_origSlowW, 60);
+    private int MaxBudgetW => Math.Max(Math.Min(_origSlowW, _ceilingW ?? int.MaxValue), 60);
+
+    // ---------- hard-throttle guard ----------
+    // 2026-11-24, Call of Duty: one second after the CPU reached ~115 W (95 °C, Turbo, no D-Helper cap) the
+    // firmware forced it to 399 MHz at 100 % load for ~90 s (power fell to 13 W, temperature 95 -> 74 °C in 1 s):
+    // an emergency throttle (PROCHOT), most likely the laptop's total power (CPU + GPU) exceeding what it allows.
+    // Nothing can shorten it once it fires, so the guard prevents the next one: it remembers a per-game power
+    // ceiling 15 % under the peak that triggered it and never lets the CPU above that in that game again.
+    private int? _ceilingW;
+    private int _collapseSeconds;
+    private readonly Queue<double> _recentPowerW = new();
+    private const int CollapseMhz = 1000, CollapseLoadPct = 50, MinCeilingW = 60;
+
+    private bool Collapsed => _collapseSeconds > 0;
+
+    private void UpdateHardThrottleGuard()
+    {
+        var t = LastTelemetry;
+        bool collapsed = LastCpuLoad >= CollapseLoadPct && _clockMhz > 0 && _clockMhz < CollapseMhz;
+        _collapseSeconds = collapsed ? _collapseSeconds + 1 : 0;
+        if (!collapsed && t != null)
+        {
+            _recentPowerW.Enqueue(Math.Max(t.FastValue, t.StapmValue));
+            while (_recentPowerW.Count > 10) _recentPowerW.Dequeue();
+        }
+        if (_collapseSeconds != 2) return;
+
+        double peak = _recentPowerW.Count > 0 ? _recentPowerW.Max() : 0;
+        if (peak < MinCeilingW / 0.85)
+        {
+            // Not after high power: some other cause (e.g. charger unplugged). Log it, nothing to learn.
+            AddEvent("warn", $"CPU forced down to {_clockMhz / 1000.0:F1} GHz by the laptop at {LastCpuLoad}% load (not from power: peak was {peak:F0} W)");
+            Log.Write($"Hard throttle at {_clockMhz} MHz, load {LastCpuLoad}%, recent peak {peak:F0} W - no ceiling learned");
+            return;
+        }
+        int ceiling = Math.Max(MinCeilingW, (int)(Math.Min(peak, _ceilingW ?? peak) * 0.85));
+        _ceilingW = ceiling;
+        _learner.RecordCeiling(ceiling);
+        if (_strategy == Strategy.Efficient) { if (_budgetW > ceiling) ApplyBudget(ceiling); }
+        else if (_capW == null || _capW > ceiling) ApplyPowerCap(ceiling, "firmware emergency throttle");
+        AddEvent("warn", $"Firmware emergency throttle: CPU forced to {_clockMhz / 1000.0:F1} GHz right after drawing {peak:F0} W. " +
+            $"{ActiveGame} is now kept at {ceiling} W or less, here and in future sessions. The firmware releases the CPU by itself after about a minute.");
+        Log.Write($"HARD THROTTLE: {_clockMhz} MHz at {LastCpuLoad}% load after {peak:F0} W peak -> ceiling {ceiling} W for {ActiveGame}");
+    }
+
+    /// <summary>Firmware may rewrite power limits (mode changes): keep the CPU under the ceiling when uncapped.</summary>
+    private void ReassertCeiling()
+    {
+        var t = LastTelemetry;
+        if (t == null || _capW != null || _ceilingW is not int cw) return;
+        if (t.SlowLimit > cw + 2 && (DateTime.Now - _lastCapReassert).TotalSeconds >= 3)
+        {
+            _lastCapReassert = DateTime.Now;
+            _smu.SetPowerLimits(cw, cw, (int)(cw * 1.1));
+        }
+    }
 
     private static int ModeForBudget(int watts) =>
         watts <= 45 ? AsusAcpi.ModeSilent : watts <= 85 ? AsusAcpi.ModeBalanced : AsusAcpi.ModeTurbo;
@@ -803,7 +918,8 @@ public sealed class GameController : IDisposable
     private void RemovePowerCap(string? why)
     {
         if (_capW == null) return;
-        if (_origSlowW > 0) _smu.SetPowerLimits(_origStapmW, _origSlowW, _origFastW);
+        if (_ceilingW is int cw && cw < _origSlowW) _smu.SetPowerLimits(cw, cw, (int)(cw * 1.1)); // uncapped = up to the ceiling
+        else if (_origSlowW > 0) _smu.SetPowerLimits(_origStapmW, _origSlowW, _origFastW);
         _capW = null;
         _lastCapChange = DateTime.Now;
         if (why != null) AddEvent("good", $"Power cap removed ({why})");
@@ -824,17 +940,33 @@ public sealed class GameController : IDisposable
             var t = LastTelemetry;
             bool gaming = _phase is Phase.GameIdle or Phase.GameUndervolted;
             bool atWall = t != null && t.TctlValue >= (_appliedTctl > 0 ? _appliedTctl : t.TctlLimit) - 2;
-            bool cpuLimited = atWall || _clockDrop || (t?.PowerLimited ?? false);
+            // Our own cap makes the SMU report "power limited": that is not a reason to cap harder.
+            bool ownCapHolding = _capW != null && !atWall;
+            bool collapsed = LastCpuLoad >= CollapseLoadPct && _clockMhz > 0 && _clockMhz < CollapseMhz;
+            bool cpuLimited = collapsed || atWall || _clockDrop || ((t?.PowerLimited ?? false) && !ownCapHolding);
             string facts = t == null
-                ? $"load {LastCpuLoad}%, {_clockMhz / 1000.0:F2} GHz"
+                ? $"load {LastCpuLoad}%, {_clockMhz / 1000.0:F2} GHz, no sensor reading"
                 : $"{t.TctlValue:F0}°C (limit {t.TctlLimit:F0}), {_clockMhz / 1000.0:F2} GHz, load {LastCpuLoad}%" + (_capW is int cap ? $", cap {cap} W" : "");
 
-            if (gaming && _strategy == Strategy.Efficient)
+            if (gaming && collapsed)
+            {
+                // Firmware emergency throttle: the guard has (or will in a second) set a ceiling. Don't touch caps.
+                verdict = $"CPU forced down to {_clockMhz / 1000.0:F1} GHz by the laptop's firmware ({facts}). That's the stutter, not the GPU. " +
+                    (_ceilingW is int cw ? $"{ActiveGame} is now kept at {cw} W or less so it doesn't happen again. " : "") +
+                    "The firmware releases the CPU by itself after about a minute.";
+            }
+            else if (gaming && _strategy == Strategy.Efficient)
             {
                 // Saving power may have been too aggressive for this moment: give it a clear margin now.
                 ApplyBudget(Math.Min(MaxBudgetW, (int)(_budgetW * 1.25) + 5));
                 _comfySeconds = 0;
                 verdict = $"{(_fpsAvg is double f ? $"{f:F0} fps, " : "")}{facts}. Responding: power raised to {_budgetW} W ({ModeName(_currentMode)}).";
+            }
+            else if (gaming && ownCapHolding && LastCpuLoad >= GamingLoadPct)
+            {
+                // Cool CPU held back by our own cap: the cap is the problem. Give the power back.
+                RemovePowerCap(null);
+                verdict = $"CPU was held back by D-Helper's own power cap ({facts}) with temperature to spare. Responding: cap removed.";
             }
             else if (gaming && cpuLimited)
             {
@@ -847,6 +979,8 @@ public sealed class GameController : IDisposable
                 }
                 verdict = $"CPU was at its limit ({facts}). Responding: fans maxed, steadier power cap.";
             }
+            else if (gaming && t == null)
+                verdict = $"Couldn't read the CPU sensors at that moment ({facts}). Recorded; D-Helper can't tell whether the CPU was the cause.";
             else if (gaming)
                 verdict = $"CPU wasn't limited ({facts}). The stutter likely came from the GPU, network or the game itself.";
             else
@@ -898,6 +1032,15 @@ public sealed class GameController : IDisposable
             // Automatic mitigation, in order of effectiveness.
             // (No instant undervolt here any more: that applied -40 at light, bursty load and crashed Windows.)
             if (thermal || _clockDrop) BoostFans("throttling detected");
+        }
+
+        if (gaming && Collapsed)
+        {
+            SetHealth(Health.Throttling, "Firmware emergency throttle",
+                $"The laptop forced the CPU down to {_clockMhz / 1000.0:F1} GHz at {LastCpuLoad}% load. It releases it by itself after about a minute; " +
+                (_ceilingW is int cw ? $"D-Helper now keeps {ActiveGame} at {cw} W or less so it doesn't happen again." : "D-Helper is recording it."));
+            lock (_events) _advice = advice;
+            return;
         }
 
         if (gaming && !_gameForeground && _fpsAvg != null)
@@ -1010,6 +1153,7 @@ public sealed class GameController : IDisposable
             {
                 _smu.SetCurveOptimizerAll(_config.SafeUndervolt);
                 if (_phase is Phase.GameIdle or Phase.GameUndervolted) _smu.SetTctlLimit(_originalTctlLimit);
+                _ceilingW = null; // EnterGame loads it again
                 RemovePowerCap(null);
             }
             try { File.Delete(MarkerPath); } catch { }
@@ -1022,6 +1166,7 @@ public sealed class GameController : IDisposable
     {
         lock (_tickLock)
         {
+            _desktopMode = -1; // saved settings get re-applied on resume; the saver re-asserts Silent next tick
             if (_phase is Phase.GameIdle or Phase.GameUndervolted)
             {
                 try { File.Delete(MarkerPath); } catch { }

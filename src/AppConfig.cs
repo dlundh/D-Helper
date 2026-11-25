@@ -27,6 +27,7 @@ public sealed class AppConfig
     public int MinPowerCapW { get; set; } = 25;     // never cap below this
     public int TargetFps { get; set; } = 60;        // one goal for every game: hold this with the least power
     public bool FanBoost { get; set; } = false;     // opt-in: max-cooling fan curve near the CPU limit (loud)
+    public bool DesktopSaver { get; set; } = true;  // no game running: Silent mode (Balanced only during sustained heavy work)
 
     public static string Folder =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "D-Helper");

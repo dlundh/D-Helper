@@ -131,6 +131,7 @@ public sealed class MainForm : Form
         steadyClocks = _config.SteadyClocks,
         targetFps = _config.TargetFps,
         fanBoost = _config.FanBoost,
+        desktopSaver = _config.DesktopSaver,
         hotkey = _hotkeyRegistered ? "Ctrl+Alt+L" : null,
         runAtLogin = AppConfig.RunAtLogin,
         applyOnStart = _config.ApplyOnStartup,
@@ -173,7 +174,8 @@ public sealed class MainForm : Form
             switch (cmd)
             {
                 case "ready": _pageReady = true; PostConfig(); PostState(); break;
-                case "mode": ApplyMode(Int(), save: true); break;
+                case "mode": ApplyMode(Int(), save: true); _game.UserPickedMode(); break;
+                case "desktopSaver": _config.DesktopSaver = Bool(); _config.Save(); _game.DesktopSaverChanged(); break;
                 case "battery":
                     _config.BatteryLimit = Math.Clamp(Int(), 40, 100);
                     _acpi.SetBatteryLimit(_config.BatteryLimit);
